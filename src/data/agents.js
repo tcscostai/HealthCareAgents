@@ -246,10 +246,18 @@ export const HEALTHCARE_CATEGORIES = [
         type: 'csnp-intelligence',
         status: 'stable',
         icon: HealthAndSafetyIcon,
-        description: 'Supports Chronic Special Needs Plan member management and care coordination.',
-        features: ['Eligibility verification', 'Condition management', 'Care coordination', 'CMS compliance'],
+        description:
+          'Multi-agent CSNP lifecycle: ICD-10 eligibility, plan assignment, enrollment, benefits, care management, claims, provider validation, and CMS compliance — orchestrated event-driven architecture.',
+        features: [
+          'Orchestrator supervisor agent',
+          '10 specialized lifecycle agents',
+          'ICD-10 rule engine & plan priority',
+          'Event bus (Kafka / Service Bus)',
+          'HL7 & REST integrations',
+          'CMS audit & compliance reporting',
+        ],
         businessTower: 'Government Programs',
-        businessValue: 'CMS quality and risk adjustment performance',
+        businessValue: 'End-to-end CSNP automation with CMS compliance',
       },
       {
         id: 'medicare-advantage',

@@ -7,12 +7,28 @@ export const NSA_IDR_AGENT_TYPES = [
 ];
 
 export const PIPELINE_STAGES = [
-  { key: 'intake', label: 'IDR Intake' },
-  { key: 'validation', label: 'IDR Validation' },
-  { key: 'compliance', label: 'NSA Compliance' },
-  { key: 'dispute', label: 'Dispute Resolution' },
-  { key: 'case', label: 'Case Management' },
+  { key: 'intake', label: 'IDR Intake', agentType: 'idr-intake' },
+  { key: 'validation', label: 'IDR Validation', agentType: 'idr-validation' },
+  { key: 'compliance', label: 'NSA Compliance', agentType: 'nsa-compliance' },
+  { key: 'dispute', label: 'Dispute Resolution', agentType: 'nsa-dispute-resolution' },
+  { key: 'case', label: 'Case Management', agentType: 'idr-case-management' },
 ];
+
+/** Ordered flow — each agent hands off to the next */
+export const NSA_IDR_AGENT_ORDER = PIPELINE_STAGES.map((s) => s.agentType);
+
+export const STAGE_TO_AGENT = Object.fromEntries(
+  PIPELINE_STAGES.map((s) => [s.key, s.agentType])
+);
+
+export const AGENT_TO_STAGE = Object.fromEntries(
+  PIPELINE_STAGES.map((s) => [s.agentType, s.key])
+);
+
+export const getNextAgentType = (currentAgentType) => {
+  const i = NSA_IDR_AGENT_ORDER.indexOf(currentAgentType);
+  return i >= 0 && i < NSA_IDR_AGENT_ORDER.length - 1 ? NSA_IDR_AGENT_ORDER[i + 1] : null;
+};
 
 export const AGENT_META = {
   'nsa-compliance': {
@@ -41,6 +57,8 @@ export const AGENT_META = {
     icon: 'hub',
   },
 };
+
+export const getAgentLabel = (agentType) => AGENT_META[agentType]?.title ?? agentType;
 
 export const INITIAL_DISPUTES = [
   {

@@ -17,7 +17,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import UnfoldMoreIcon from '@mui/icons-material/UnfoldMore';
 import UnfoldLessIcon from '@mui/icons-material/UnfoldLess';
 import AgentDetailDialog from '../components/AgentDetailDialog';
-import { NSA_IDR_AGENT_TYPES } from '../data/nsaIdrData';
+import { INITIAL_DISPUTES, NSA_IDR_AGENT_TYPES } from '../data/nsaIdrData';
 
 const CSNPIntelligenceWorkspace = lazy(() => import('../components/agents/CSNPIntelligenceWorkspace'));
 const NSAIDRWorkspace = lazy(() => import('../components/agents/NSAIDRWorkspace'));
@@ -95,6 +95,7 @@ export default function AgentMarketplace() {
   const [csnpWorkspaceOpen, setCsnpWorkspaceOpen] = useState(false);
   const [nsaIdrWorkspaceOpen, setNsaIdrWorkspaceOpen] = useState(false);
   const [nsaIdrAgentType, setNsaIdrAgentType] = useState('idr-intake');
+  const [nsaDisputes, setNsaDisputes] = useState(INITIAL_DISPUTES);
 
   const filteredCategories = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -421,6 +422,8 @@ export default function AgentMarketplace() {
             open={nsaIdrWorkspaceOpen}
             onClose={() => setNsaIdrWorkspaceOpen(false)}
             agentType={nsaIdrAgentType}
+            disputes={nsaDisputes}
+            onDisputesChange={setNsaDisputes}
           />
         )}
       </Suspense>

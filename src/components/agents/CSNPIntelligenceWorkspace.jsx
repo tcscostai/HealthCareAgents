@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
-import { styled } from '@mui/material/styles';
+import CSNPAgentActivityStream from './CSNPAgentActivityStream';
+import CSNPEventBusStream from './CSNPEventBusStream';
+import { createTheme, ThemeProvider, styled } from '@mui/material/styles';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -12,7 +14,9 @@ import FormControl from '@mui/material/FormControl';
 import Grid from '@mui/material/Grid2';
 import IconButton from '@mui/material/IconButton';
 import InputLabel from '@mui/material/InputLabel';
-import LinearProgress from '@mui/material/LinearProgress';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import ListItemText from '@mui/material/ListItemText';
 import MenuItem from '@mui/material/MenuItem';
 import Paper from '@mui/material/Paper';
 import Select from '@mui/material/Select';
@@ -24,709 +28,752 @@ import Tabs from '@mui/material/Tabs';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
+import TableContainer from '@mui/material/TableContainer';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import CloseIcon from '@mui/icons-material/Close';
-import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
-import PendingIcon from '@mui/icons-material/Pending';
-import PhoneIcon from '@mui/icons-material/Phone';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import SendIcon from '@mui/icons-material/Send';
-import TaskAltIcon from '@mui/icons-material/TaskAlt';
-import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import ScienceIcon from '@mui/icons-material/Science';
+import { CSNP_MEMBERS, CSNP_PLAN } from '../../data/csnpData';
 import {
-  AI_INSIGHTS,
-  CARE_TASKS,
-  COMPLIANCE_ITEMS,
-  CSNP_MEMBERS,
-  CSNP_PLAN,
-  ELIGIBILITY_CHECKS,
-  OUTREACH_QUEUE,
-} from '../../data/csnpData';
+  CSNP_AGENT_META,
+  CSNP_AGENT_ORDER,
+  CSNP_PIPELINE_STAGES,
+  AGENT_ACTIVITY_STEPS,
+  AGENT_PUBLISH_EVENTS,
+  INITIAL_WORKFLOWS,
+  TEST_SCENARIOS,
+  createInitialWorkflow,
+  getCsnpAgentLabel,
+  getNextCsnpAgentType,
+} from '../../data/csnpAgentData';
+import {
+  agentTypeForStage,
+  applyTestScenario,
+  runAgent,
+  runFullLifecycle,
+  runOrchestratorStep,
+} from '../../lib/csnpOrchestrator';
 
-const HeaderBar = styled(Box)(({ theme }) => ({
+const compactTheme = createTheme({
+  typography: { fontSize: 12 },
+  components: {
+    MuiButton: { defaultProps: { size: 'small' } },
+    MuiTableCell: { styleOverrides: { root: { fontSize: '0.7rem', padding: '6px 8px' } } },
+  },
+  '@keyframes pulse': {
+    '0%, 100%': { opacity: 1 },
+    '50%': { opacity: 0.65 },
+  },
+});
+
+const HeaderBar = styled(Box)(() => ({
   display: 'flex',
   alignItems: 'center',
-  gap: theme.spacing(2),
-  padding: theme.spacing(2, 3),
+  gap: 8,
+  padding: '10px 16px',
   background: 'linear-gradient(135deg, #FF9500 0%, #FFBD2E 100%)',
   color: '#fff',
 }));
 
 const StatCard = styled(Paper)(({ theme }) => ({
-  padding: theme.spacing(2),
-  borderRadius: theme.shape.borderRadius * 2,
+  padding: theme.spacing(1),
+  borderRadius: 10,
   border: '1px solid rgba(0,0,0,0.06)',
-  height: '100%',
 }));
 
-const statusColor = (status) => {
-  const map = {
-    Active: 'success',
-    'Pending Verification': 'warning',
-    Open: 'warning',
-    Closed: 'success',
-    Compliant: 'success',
-    'Action Required': 'error',
-    'On Track': 'info',
-    Critical: 'error',
-    High: 'error',
-    Medium: 'warning',
-    Routine: 'default',
-    Scheduled: 'info',
-    'In Progress': 'warning',
-    Pending: 'default',
-    Completed: 'success',
-  };
-  return map[status] || 'default';
-};
-
 function TabPanel({ children, value, index }) {
-  return (
-    <div role="tabpanel" hidden={value !== index}>
-      {value === index && <Box sx={{ py: 3 }}>{children}</Box>}
-    </div>
-  );
+  return value === index ? <Box sx={{ py: 1.5 }}>{children}</Box> : null;
 }
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const formatActivityTime = () =>
+  new Date().toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+const statusChip = (w) => {
+  if (w.failed) return 'error';
+  if (w.completed) return 'success';
+  if (w.status?.includes('Rejected')) return 'error';
+  return 'warning';
+};
 
 export default function CSNPIntelligenceWorkspace({ open, onClose }) {
   const [tab, setTab] = useState(0);
-  const [selectedMemberId, setSelectedMemberId] = useState('M-10482');
-  const [memberSearch, setMemberSearch] = useState('');
-  const [eligibilityRunning, setEligibilityRunning] = useState(false);
-  const [eligibilityResults, setEligibilityResults] = useState(null);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiInsight, setAiInsight] = useState(AI_INSIGHTS.portfolio[0]);
-  const [tasks, setTasks] = useState(CARE_TASKS);
-  const [outreach, setOutreach] = useState(OUTREACH_QUEUE);
-  const [contactNotes, setContactNotes] = useState({});
+  const [workflows, setWorkflows] = useState(INITIAL_WORKFLOWS);
+  const [selectedId, setSelectedId] = useState(INITIAL_WORKFLOWS[0]?.memberId ?? 'M-10482');
+  const [selectedAgent, setSelectedAgent] = useState('diagnosis-validation');
+  const [loading, setLoading] = useState(false);
   const [snackbar, setSnackbar] = useState(null);
+  const [icdInput, setIcdInput] = useState('I50.9,E11.9');
+  const [activityLog, setActivityLog] = useState([]);
+  const [activityLive, setActivityLive] = useState(false);
+  const [liveBusEvents, setLiveBusEvents] = useState([]);
 
-  const selectedMember = useMemo(
-    () => CSNP_MEMBERS.find((m) => m.id === selectedMemberId) ?? CSNP_MEMBERS[0],
-    [selectedMemberId]
+  const notify = (message, severity = 'success') => setSnackbar({ message, severity });
+
+  const selected = useMemo(
+    () => workflows.find((w) => w.memberId === selectedId) ?? workflows[0],
+    [workflows, selectedId]
   );
 
-  const filteredMembers = useMemo(() => {
-    const q = memberSearch.trim().toLowerCase();
-    if (!q) return CSNP_MEMBERS;
-    return CSNP_MEMBERS.filter(
-      (m) =>
-        m.name.toLowerCase().includes(q) ||
-        m.id.toLowerCase().includes(q) ||
-        m.mbi.toLowerCase().includes(q)
+  const updateWorkflow = useCallback((memberId, updater) => {
+    setWorkflows((prev) => prev.map((w) => (w.memberId === memberId ? updater(w) : w)));
+  }, []);
+
+  const activeStageIndex = CSNP_PIPELINE_STAGES.findIndex((s) => s.key === selected?.stage);
+
+  const nextStep = useMemo(() => {
+    if (!selected) return null;
+    if (selected.completed) {
+      return {
+        severity: 'success',
+        nextAgent: null,
+        text: `Lifecycle complete for ${selected.memberName}. Open the Event bus tab to review all published events and the compliance audit trail.`,
+      };
+    }
+    if (selected.failed) {
+      return {
+        severity: 'error',
+        nextAgent: 'diagnosis-validation',
+        text: `Workflow stopped for ${selected.memberId}. Next: correct ICD-10 / diagnosis on Agent console, or review rejection in Event bus. Run Compliance Agent if audit is required.`,
+      };
+    }
+    const nextAgent =
+      (selected.lastAgent && getNextCsnpAgentType(selected.lastAgent)) ||
+      agentTypeForStage(selected.stage);
+    if (!nextAgent) {
+      return {
+        severity: 'info',
+        nextAgent: 'compliance',
+        text: `Next: run ${getCsnpAgentLabel('compliance')} on the Agent console tab for ${selected.memberId}.`,
+      };
+    }
+    return {
+      severity: 'success',
+      nextAgent,
+      text: `Next: open the Agent console tab and run ${getCsnpAgentLabel(nextAgent)} for ${selected.memberId} (current stage: ${selected.stage}).`,
+    };
+  }, [selected]);
+
+  const goToNextAgent = useCallback(() => {
+    if (!nextStep?.nextAgent) return;
+    setSelectedAgent(nextStep.nextAgent);
+    setTab(1);
+  }, [nextStep]);
+
+  const renderNextStepHint = () => {
+    if (!nextStep) return null;
+    return (
+      <Alert
+        severity={nextStep.severity}
+        sx={{ mt: 1, borderRadius: 1.5, py: 0 }}
+        icon={false}
+        action={
+          nextStep.nextAgent && !selected?.completed ? (
+            <Button color="inherit" size="small" onClick={goToNextAgent}>
+              Open agent
+            </Button>
+          ) : null
+        }
+      >
+        <Typography variant="caption" sx={{ fontSize: '0.65rem' }}>
+          {nextStep.text}
+        </Typography>
+      </Alert>
     );
-  }, [memberSearch]);
+  };
+
+  const upsertActivity = useCallback((entry) => {
+    setActivityLog((prev) => {
+      const idx = prev.findIndex((a) => a.id === entry.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...entry };
+        return next;
+      }
+      return [...prev, { ...entry, timestamp: entry.timestamp ?? formatActivityTime() }];
+    });
+  }, []);
+
+  const publishBusEvent = useCallback((agentType, failed = false) => {
+    const map = AGENT_PUBLISH_EVENTS[agentType];
+    if (!map) return;
+    const type = failed && map.fail ? map.fail : map.success;
+    if (!type) return;
+    const at = new Date().toISOString();
+    setLiveBusEvents((prev) => [
+      ...prev,
+      {
+        type,
+        at,
+        payload: { memberId: selectedId, agent: agentType },
+        idempotencyKey: `${selectedId}-${type}-${at}`,
+      },
+    ]);
+  }, [selectedId]);
+
+  const busEvents = useMemo(() => {
+    const persisted = selected?.events || [];
+    const merged = [...persisted, ...liveBusEvents];
+    return merged.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  }, [selected?.events, liveBusEvents]);
+
+  const simulateAgentActivities = useCallback(
+    async (agentTypes) => {
+      const speed = agentTypes.length > 1 ? 0.4 : 1;
+      let seq = 0;
+      for (const agentType of agentTypes) {
+        const steps = AGENT_ACTIVITY_STEPS[agentType] || [
+          { message: `Executing ${getCsnpAgentLabel(agentType)}…`, duration: 600 },
+        ];
+        for (const step of steps) {
+          const id = `${agentType}-${seq++}`;
+          upsertActivity({ id, message: step.message, status: 'running', agentType });
+          await delay(Math.max(180, step.duration * speed));
+          upsertActivity({ id, message: step.message, status: 'success', agentType });
+          const pubMatch = step.message.match(/→\s*([\w.]+)/);
+          if (pubMatch) {
+            const at = new Date().toISOString();
+            setLiveBusEvents((prev) => [
+              ...prev,
+              {
+                type: pubMatch[1],
+                at,
+                payload: { memberId: selectedId, agent: agentType },
+                idempotencyKey: `${selectedId}-${pubMatch[1]}-${id}`,
+              },
+            ]);
+          }
+        }
+      }
+    },
+    [upsertActivity, selectedId]
+  );
 
   const portfolioStats = useMemo(
     () => ({
-      enrolled: CSNP_MEMBERS.filter((m) => m.enrollmentStatus === 'Active').length,
-      pending: CSNP_MEMBERS.filter((m) => m.enrollmentStatus === 'Pending Verification').length,
-      openGaps: CSNP_MEMBERS.reduce((n, m) => n + m.careGaps.filter((g) => g.status === 'Open').length, 0),
-      complianceAlerts: COMPLIANCE_ITEMS.filter((c) => c.status === 'Action Required').length,
-      outreachDue: outreach.filter((o) => o.status !== 'Completed').length,
+      active: workflows.filter((w) => w.completed).length,
+      inFlight: workflows.filter((w) => !w.completed && !w.failed).length,
+      rejected: workflows.filter((w) => w.failed).length,
+      events: workflows.reduce((n, w) => n + (w.events?.length || 0), 0),
     }),
-    [outreach]
+    [workflows]
   );
 
-  const runEligibilityVerification = useCallback(() => {
-    setEligibilityRunning(true);
-    setEligibilityResults(null);
-    setTimeout(() => {
-      const isPending = selectedMember.enrollmentStatus === 'Pending Verification';
-      setEligibilityResults({
-        medicare: { pass: true, detail: 'Part A & B active — entitlement confirmed via HETS' },
-        serviceArea: { pass: true, detail: `Resides in ${CSNP_PLAN.serviceArea} service area` },
-        chronicCondition: {
-          pass: !isPending,
-          detail: isPending
-            ? 'COPD documentation received; PCP attestation pending'
-            : 'Qualifying chronic conditions verified in claims and clinical feed',
-        },
-        pcpAttestation: {
-          pass: !isPending,
-          detail: isPending ? 'Attestation not on file — due within 30 days of enrollment' : 'PCP attestation current',
-        },
-        esrdRule: {
-          pass: selectedMember.qualifyingConditions.some((c) => c.code.startsWith('N18'))
-            ? true
-            : true,
-          detail: selectedMember.qualifyingConditions.some((c) => c.code.startsWith('N18'))
-            ? 'ESRD SNP pathway — dialysis coordination active'
-            : 'ESRD exclusion rule N/A for condition set',
-        },
-        enrollmentPeriod: {
-          pass: true,
-          detail: 'Valid election period — IEP/SEP documented',
-        },
-        overall: isPending ? 'Conditional' : 'Eligible',
-      });
-      setEligibilityRunning(false);
-    }, 2200);
-  }, [selectedMember]);
-
-  const runMemberAnalysis = useCallback(() => {
-    setAiLoading(true);
-    setTimeout(() => {
-      setAiInsight(AI_INSIGHTS.member[selectedMember.id] || AI_INSIGHTS.portfolio[0]);
-      setAiLoading(false);
-    }, 1500);
-  }, [selectedMember.id]);
-
-  const completeTask = (taskId) => {
-    setTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, status: 'Completed' } : t))
-    );
-    setSnackbar('Care task marked complete and synced to care management platform.');
+  const runLifecycle = async () => {
+    if (!selected) return;
+    setTab(1);
+    setLoading(true);
+    setActivityLive(true);
+    setActivityLog([]);
+    setLiveBusEvents([]);
+    upsertActivity({
+      id: 'orch-start',
+      message: `Orchestrator dispatching full CSNP lifecycle for ${selected.memberId}…`,
+      status: 'running',
+      agentType: 'orchestrator',
+    });
+    await delay(400);
+    upsertActivity({ id: 'orch-start', message: `Orchestrator dispatching full CSNP lifecycle for ${selected.memberId}…`, status: 'success', agentType: 'orchestrator' });
+    try {
+      await simulateAgentActivities(CSNP_AGENT_ORDER);
+      const result = runFullLifecycle(selected);
+      updateWorkflow(selected.memberId, () => result);
+      if (result.failed && result.lastAgent) {
+        publishBusEvent(result.lastAgent, true);
+      }
+      if (result.failed) {
+        upsertActivity({
+          id: 'final',
+          message: result.rejectionReason || result.status,
+          status: 'error',
+          agentType: result.lastAgent,
+        });
+        notify(`Lifecycle halted: ${result.rejectionReason || result.status}`, 'error');
+      } else if (result.completed) {
+        upsertActivity({
+          id: 'final',
+          message: `Workflow completed — ${result.status}`,
+          status: 'success',
+          agentType: 'compliance',
+        });
+        notify(`Lifecycle complete for ${result.memberName}. See Event bus for audit trail.`, 'success');
+      } else {
+        const next = result.lastAgent && getNextCsnpAgentType(result.lastAgent);
+        notify(
+          next
+            ? `Step complete. Next: run ${getCsnpAgentLabel(next)} on Agent console.`
+            : `Lifecycle advanced for ${result.memberName}.`,
+          'success'
+        );
+      }
+    } finally {
+      setActivityLive(false);
+      setLoading(false);
+      setTimeout(() => setLiveBusEvents([]), 800);
+    }
   };
 
-  const logOutreach = (outreachId) => {
-    const notes = (contactNotes[outreachId] || '').trim();
-    if (!notes) {
-      setSnackbar('Enter contact notes before logging outreach.');
-      return;
+  const runSingleAgent = async () => {
+    if (!selected) return;
+    setTab(1);
+    setLoading(true);
+    setActivityLive(true);
+    setActivityLog([]);
+    setLiveBusEvents([]);
+    try {
+      await simulateAgentActivities([selectedAgent]);
+      const stageKey = CSNP_PIPELINE_STAGES.find((s) => s.agentType === selectedAgent)?.key ?? selected.stage;
+      const w = runAgent(selectedAgent, { ...selected, stage: stageKey });
+      updateWorkflow(selected.memberId, () => w);
+      if (w.failed) {
+        publishBusEvent(selectedAgent, true);
+        upsertActivity({
+          id: 'agent-fail',
+          message: w.rejectionReason || w.status,
+          status: 'error',
+          agentType: selectedAgent,
+        });
+        notify(w.rejectionReason || w.status, 'error');
+      } else {
+        const next = getNextCsnpAgentType(selectedAgent);
+        notify(
+          next
+            ? `${getCsnpAgentLabel(selectedAgent)} complete. Next: run ${getCsnpAgentLabel(next)}.`
+            : `${getCsnpAgentLabel(selectedAgent)} complete.`,
+          'success'
+        );
+      }
+    } finally {
+      setActivityLive(false);
+      setLoading(false);
+      setTimeout(() => setLiveBusEvents([]), 800);
     }
-    setOutreach((prev) =>
-      prev.map((o) => (o.id === outreachId ? { ...o, status: 'Completed' } : o))
-    );
-    setContactNotes((prev) => ({ ...prev, [outreachId]: '' }));
-    setSnackbar('Outreach logged. Care gap workflow updated and member timeline refreshed.');
+  };
+
+  const runOrchestratorOnce = async () => {
+    if (!selected) return;
+    const agentType = agentTypeForStage(selected.stage);
+    setTab(1);
+    setLoading(true);
+    setActivityLive(true);
+    setActivityLog([]);
+    setLiveBusEvents([]);
+    try {
+      await simulateAgentActivities([agentType]);
+      const { workflow, halted } = runOrchestratorStep(selected);
+      updateWorkflow(selected.memberId, () => workflow);
+      if (workflow.failed) {
+        publishBusEvent(agentType, true);
+        upsertActivity({
+          id: 'orch-fail',
+          message: workflow.rejectionReason || workflow.status,
+          status: 'error',
+          agentType,
+        });
+        notify(`Orchestrator halted: ${workflow.rejectionReason || workflow.status}`, 'error');
+      } else if (halted && workflow.completed) {
+        notify('Orchestrator complete — lifecycle finished.', 'success');
+      } else {
+        const next = workflow.lastAgent && getNextCsnpAgentType(workflow.lastAgent);
+        notify(
+          next
+            ? `Orchestrator step complete. Next: run ${getCsnpAgentLabel(next)} on Agent console.`
+            : 'Orchestrator advanced to next stage.',
+          'success'
+        );
+      }
+    } finally {
+      setActivityLive(false);
+      setLoading(false);
+      setTimeout(() => setLiveBusEvents([]), 800);
+    }
+  };
+
+  const runScenario = async (scenarioId) => {
+    const scenario = TEST_SCENARIOS.find((s) => s.id === scenarioId);
+    if (!scenario) return;
+    const member = CSNP_MEMBERS.find((m) => m.id === scenario.memberId) || CSNP_MEMBERS[0];
+    const base = workflows.find((w) => w.memberId === member.id) || createInitialWorkflow(member);
+    setTab(1);
+    setLoading(true);
+    setActivityLive(true);
+    setActivityLog([]);
+    setLiveBusEvents([]);
+    upsertActivity({
+      id: 'scenario',
+      message: `Running test scenario: ${scenario.name}`,
+      status: 'running',
+    });
+    await delay(350);
+    upsertActivity({ id: 'scenario', message: `Running test scenario: ${scenario.name}`, status: 'success' });
+    try {
+      const agentsToShow =
+        scenario.icdCodes?.length === 0
+          ? ['diagnosis-validation', 'compliance']
+          : CSNP_AGENT_ORDER;
+      await simulateAgentActivities(agentsToShow);
+      const result = applyTestScenario(scenario, base);
+      setWorkflows((prev) => {
+        const exists = prev.some((w) => w.memberId === result.memberId);
+        if (exists) return prev.map((w) => (w.memberId === result.memberId ? result : w));
+        return [result, ...prev];
+      });
+      setSelectedId(result.memberId);
+      if (result.failed) {
+        if (result.lastAgent) publishBusEvent(result.lastAgent, true);
+        upsertActivity({ id: 'sc-fail', message: result.rejectionReason || 'Scenario failed', status: 'error' });
+        notify(`Scenario failed: ${scenario.name}`, 'error');
+      } else {
+        upsertActivity({ id: 'sc-ok', message: `Scenario complete — ${result.status}`, status: 'success' });
+        notify(`Scenario complete: ${scenario.name}. See Event bus.`, 'success');
+      }
+    } finally {
+      setActivityLive(false);
+      setLoading(false);
+      setTimeout(() => setLiveBusEvents([]), 800);
+    }
+  };
+
+  const startNewMemberWorkflow = () => {
+    const codes = icdInput.split(/[\s,]+/).filter(Boolean);
+    const id = `M-NEW-${Date.now().toString().slice(-4)}`;
+    const w = {
+      ...createInitialWorkflow({ id, name: 'New Enrollment', mbi: 'PENDING', qualifyingConditions: codes.map((code) => ({ code })) }),
+      memberId: id,
+      memberName: 'New Enrollment',
+      icdCodes: codes,
+    };
+    setWorkflows((prev) => [w, ...prev]);
+    setSelectedId(id);
+    notify('Workflow created. Next: run Diagnosis Validation Agent or Run full lifecycle.', 'success');
   };
 
   return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      maxWidth="xl"
-      fullWidth
-      PaperProps={{ sx: { borderRadius: 3, overflow: 'hidden', maxHeight: '96vh' } }}
-    >
-      <HeaderBar>
-        <HealthAndSafetyIcon sx={{ fontSize: 36 }} />
-        <Box sx={{ flex: 1 }}>
-          <Typography variant="h6" fontWeight={700}>
-            CSNP Intelligence Agent
-          </Typography>
-          <Typography variant="body2" sx={{ opacity: 0.95 }}>
-            {CSNP_PLAN.name} · {CSNP_PLAN.contractId} · {CSNP_PLAN.modelOfCare}
-          </Typography>
-        </Box>
-        <Chip label="Production" size="small" sx={{ bgcolor: 'rgba(255,255,255,0.25)', color: '#fff' }} />
-        <IconButton onClick={onClose} sx={{ color: '#fff' }} aria-label="Close">
-          <CloseIcon />
-        </IconButton>
-      </HeaderBar>
+    <ThemeProvider theme={compactTheme}>
+      <Dialog
+        open={open}
+        onClose={onClose}
+        maxWidth="lg"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: 3, overflow: 'hidden', height: '88vh', maxHeight: '88vh', display: 'flex', flexDirection: 'column' } }}
+      >
+        <HeaderBar>
+          <HealthAndSafetyIcon sx={{ fontSize: 28 }} />
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography variant="body2" fontWeight={700} noWrap>
+              CSNP Agentic System
+            </Typography>
+            <Typography variant="caption" sx={{ opacity: 0.95 }} noWrap>
+              Orchestrator + 10 lifecycle agents · {CSNP_PLAN.name}
+            </Typography>
+          </Box>
+          <Chip label="Production" size="small" sx={{ bgcolor: 'rgba(255,255,255,0.25)', color: '#fff', height: 20 }} />
+          <IconButton onClick={onClose} sx={{ color: '#fff' }} size="small" aria-label="Close">
+            <CloseIcon />
+          </IconButton>
+        </HeaderBar>
 
-      <Box sx={{ px: 3, pt: 2, bgcolor: '#F8FAFF' }}>
-        <Grid container spacing={2} sx={{ mb: 2 }}>
-          {[
-            { label: 'Active CSNP Members', value: portfolioStats.enrolled, sub: `${portfolioStats.pending} pending verification` },
-            { label: 'Open Care Gaps', value: portfolioStats.openGaps, sub: 'HEDIS & custom measures' },
-            { label: 'Outreach Due', value: portfolioStats.outreachDue, sub: 'Next 7 days' },
-            { label: 'Compliance Alerts', value: portfolioStats.complianceAlerts, sub: 'Requires action' },
-          ].map((stat) => (
-            <Grid key={stat.label} size={{ xs: 6, md: 3 }}>
-              <StatCard elevation={0}>
-                <Typography variant="caption" color="text.secondary">
-                  {stat.label}
-                </Typography>
-                <Typography variant="h4" fontWeight={700} color="primary.main">
-                  {stat.value}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {stat.sub}
-                </Typography>
-              </StatCard>
-            </Grid>
-          ))}
-        </Grid>
-
-        <Paper elevation={0} sx={{ borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
-          <Tabs
-            value={tab}
-            onChange={(_, v) => setTab(v)}
-            variant="scrollable"
-            scrollButtons="auto"
-            sx={{
-              px: 2,
-              borderBottom: 1,
-              borderColor: 'divider',
-              '& .MuiTab-root': { textTransform: 'none', fontWeight: 600, minHeight: 56 },
-            }}
-          >
-            <Tab label="Member 360" />
-            <Tab label="Eligibility Verification" />
-            <Tab label="Condition Management" />
-            <Tab label="Care Coordination" />
-            <Tab label="Member Outreach" />
-            <Tab label="CMS Compliance" />
-          </Tabs>
-
-          <DialogContent sx={{ px: 3, pt: 0, minHeight: 420 }}>
-            <TabPanel value={tab} index={0}>
-              <Grid container spacing={3}>
-                <Grid size={{ xs: 12, md: 4 }}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    placeholder="Search by name, ID, or MBI..."
-                    value={memberSearch}
-                    onChange={(e) => setMemberSearch(e.target.value)}
-                    sx={{ mb: 2 }}
-                  />
-                  <Paper variant="outlined" sx={{ maxHeight: 360, overflow: 'auto', borderRadius: 2 }}>
-                    {filteredMembers.map((m) => (
-                      <Box
-                        key={m.id}
-                        onClick={() => setSelectedMemberId(m.id)}
-                        sx={{
-                          p: 2,
-                          cursor: 'pointer',
-                          borderBottom: '1px solid',
-                          borderColor: 'divider',
-                          bgcolor: m.id === selectedMemberId ? 'rgba(0, 102, 255, 0.08)' : 'transparent',
-                          '&:hover': { bgcolor: 'action.hover' },
-                        }}
-                      >
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <Typography variant="subtitle2" fontWeight={600}>
-                            {m.name}
-                          </Typography>
-                          <Chip label={m.outreachPriority} size="small" color={statusColor(m.outreachPriority)} />
-                        </Box>
-                        <Typography variant="caption" color="text.secondary">
-                          {m.id} · {m.age} yrs · RAF {m.riskScore}
-                        </Typography>
-                        <Chip
-                          label={m.enrollmentStatus}
-                          size="small"
-                          color={statusColor(m.enrollmentStatus)}
-                          sx={{ mt: 1 }}
-                        />
-                      </Box>
-                    ))}
-                  </Paper>
-                </Grid>
-                <Grid size={{ xs: 12, md: 8 }}>
-                  <Paper variant="outlined" sx={{ p: 3, borderRadius: 2 }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2, mb: 2 }}>
-                      <Box>
-                        <Typography variant="h6" fontWeight={600}>
-                          {selectedMember.name}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          MBI {selectedMember.mbi} · DOB {selectedMember.dob} · PCP {selectedMember.pcp}
-                        </Typography>
-                      </Box>
-                      <Button
-                        variant="contained"
-                        startIcon={aiLoading ? <CircularProgress size={18} color="inherit" /> : <AutoAwesomeIcon />}
-                        onClick={runMemberAnalysis}
-                        disabled={aiLoading}
-                      >
-                        Run AI Analysis
-                      </Button>
-                    </Box>
-                    <Alert severity="info" icon={<AutoAwesomeIcon />} sx={{ mb: 2, borderRadius: 2 }}>
-                      <Typography variant="body2">{aiInsight}</Typography>
-                    </Alert>
-                    <Grid container spacing={2}>
-                      <Grid size={6}>
-                        <Typography variant="caption" color="text.secondary">
-                          Enrollment
-                        </Typography>
-                        <Typography variant="body2" fontWeight={600}>
-                          {selectedMember.enrollmentStatus} since {selectedMember.enrollmentDate}
-                        </Typography>
-                      </Grid>
-                      <Grid size={6}>
-                        <Typography variant="caption" color="text.secondary">
-                          Last contact
-                        </Typography>
-                        <Typography variant="body2" fontWeight={600}>
-                          {selectedMember.lastContact}
-                        </Typography>
-                      </Grid>
-                    </Grid>
-                    <Divider sx={{ my: 2 }} />
-                    <Typography variant="subtitle2" fontWeight={600} gutterBottom>
-                      Qualifying conditions
-                    </Typography>
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow>
-                          <TableCell>ICD-10</TableCell>
-                          <TableCell>Description</TableCell>
-                          <TableCell>HCC</TableCell>
-                          <TableCell>Verified</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {selectedMember.qualifyingConditions.map((c) => (
-                          <TableRow key={c.code}>
-                            <TableCell>{c.code}</TableCell>
-                            <TableCell>{c.description}</TableCell>
-                            <TableCell>{c.hcc}</TableCell>
-                            <TableCell>
-                              {c.verified ? (
-                                <CheckCircleIcon color="success" fontSize="small" />
-                              ) : (
-                                <PendingIcon color="warning" fontSize="small" />
-                              )}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                    {selectedMember.complianceFlags.length > 0 && (
-                      <Alert severity="warning" sx={{ mt: 2, borderRadius: 2 }}>
-                        {selectedMember.complianceFlags.join(' · ')}
-                      </Alert>
-                    )}
-                  </Paper>
-                </Grid>
+        <Box sx={{ flexShrink: 0, px: 1.5, pt: 1, bgcolor: '#FFFBF5' }}>
+          <Grid container spacing={0.75} sx={{ mb: 1 }}>
+            {[
+              { label: 'Completed lifecycles', value: portfolioStats.active },
+              { label: 'In progress', value: portfolioStats.inFlight },
+              { label: 'Rejected / failed', value: portfolioStats.rejected },
+              { label: 'Events published', value: portfolioStats.events },
+            ].map((s) => (
+              <Grid key={s.label} size={3}>
+                <StatCard elevation={0}>
+                  <Typography variant="caption" color="text.secondary" display="block" noWrap>
+                    {s.label}
+                  </Typography>
+                  <Typography variant="caption" fontWeight={700} color="primary.main">
+                    {s.value}
+                  </Typography>
+                </StatCard>
               </Grid>
-            </TabPanel>
+            ))}
+          </Grid>
 
-            <TabPanel value={tab} index={1}>
-              <Grid container spacing={3}>
-                <Grid size={{ xs: 12, md: 5 }}>
-                  <FormControl fullWidth size="small" sx={{ mb: 2 }}>
-                    <InputLabel>Member</InputLabel>
-                    <Select
-                      value={selectedMemberId}
-                      label="Member"
-                      onChange={(e) => {
-                        setSelectedMemberId(e.target.value);
-                        setEligibilityResults(null);
+          <Alert severity="info" sx={{ mb: 1, borderRadius: 1.5, py: 0 }}>
+            <Typography variant="caption" sx={{ fontSize: '0.65rem' }}>
+              Follow the <strong>Next step</strong> message after each action — use Agent console to run the next lifecycle agent.
+            </Typography>
+          </Alert>
+
+          <Paper variant="outlined" sx={{ p: 1, mb: 1, borderRadius: 1.5, overflowX: 'auto' }}>
+            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem' }}>
+              CSNP lifecycle (event-driven)
+            </Typography>
+            <Stepper activeStep={activeStageIndex >= 0 ? activeStageIndex : 0} alternativeLabel sx={{ minWidth: 720, py: 0.5 }}>
+              {CSNP_PIPELINE_STAGES.map((stage) => (
+                <Step key={stage.key} completed={activeStageIndex > CSNP_PIPELINE_STAGES.indexOf(stage)}>
+                  <StepLabel sx={{ '& .MuiStepLabel-label': { fontSize: '0.6rem' } }}>{stage.label}</StepLabel>
+                </Step>
+              ))}
+            </Stepper>
+          </Paper>
+        </Box>
+
+        <Tabs
+          value={tab}
+          onChange={(_, v) => setTab(v)}
+          variant="scrollable"
+          scrollButtons="auto"
+          sx={{ px: 1.5, minHeight: 40, borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}
+        >
+          <Tab label="Orchestrator" sx={{ textTransform: 'none', minHeight: 40, fontSize: '0.75rem' }} />
+          <Tab label="Agent console" sx={{ textTransform: 'none', minHeight: 40, fontSize: '0.75rem' }} />
+          <Tab label="Event bus" sx={{ textTransform: 'none', minHeight: 40, fontSize: '0.75rem' }} />
+          <Tab label="Test scenarios" sx={{ textTransform: 'none', minHeight: 40, fontSize: '0.75rem' }} />
+          <Tab label="Member 360" sx={{ textTransform: 'none', minHeight: 40, fontSize: '0.75rem' }} />
+        </Tabs>
+
+        <DialogContent sx={{ flex: 1, minHeight: 0, overflow: 'auto', px: 1.5, py: 1, bgcolor: '#F8FAFF' }}>
+          <TabPanel value={tab} index={0}>
+            <Grid container spacing={1}>
+              <Grid size={{ xs: 12, md: 4 }}>
+                <Typography variant="caption" fontWeight={600} sx={{ mb: 0.5, display: 'block' }}>
+                  Member workflows
+                </Typography>
+                <Paper variant="outlined" sx={{ maxHeight: 280, overflow: 'auto' }}>
+                  {workflows.map((w) => (
+                    <Box
+                      key={w.memberId}
+                      onClick={() => setSelectedId(w.memberId)}
+                      sx={{
+                        p: 1,
+                        cursor: 'pointer',
+                        borderBottom: '1px solid',
+                        borderColor: 'divider',
+                        bgcolor: w.memberId === selectedId ? 'rgba(255,149,0,0.1)' : 'transparent',
                       }}
                     >
-                      {CSNP_MEMBERS.map((m) => (
-                        <MenuItem key={m.id} value={m.id}>
-                          {m.name} ({m.id})
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                  <Button
-                    variant="contained"
-                    fullWidth
-                    startIcon={eligibilityRunning ? <CircularProgress size={18} color="inherit" /> : <RefreshIcon />}
-                    onClick={runEligibilityVerification}
-                    disabled={eligibilityRunning}
-                    sx={{ mb: 2 }}
-                  >
-                    Run CMS Eligibility Verification
-                  </Button>
-                  <Typography variant="caption" color="text.secondary">
-                    Validates Medicare entitlement, service area, chronic condition documentation, PCP
-                    attestation, and enrollment period per CMS CSNP requirements.
-                  </Typography>
-                </Grid>
-                <Grid size={{ xs: 12, md: 7 }}>
-                  {eligibilityRunning && <LinearProgress sx={{ mb: 2, borderRadius: 1 }} />}
-                  {!eligibilityResults && !eligibilityRunning && (
-                    <Paper variant="outlined" sx={{ p: 4, textAlign: 'center', borderRadius: 2 }}>
-                      <Typography color="text.secondary">
-                        Select a member and run verification to view results.
+                      <Typography variant="caption" fontWeight={600}>
+                        {w.memberName}
                       </Typography>
-                    </Paper>
-                  )}
-                  {eligibilityResults && (
-                    <Paper variant="outlined" sx={{ p: 3, borderRadius: 2 }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                        {eligibilityResults.overall === 'Eligible' ? (
-                          <CheckCircleIcon color="success" />
-                        ) : (
-                          <WarningAmberIcon color="warning" />
-                        )}
-                        <Typography variant="h6" fontWeight={600}>
-                          Overall: {eligibilityResults.overall}
-                        </Typography>
-                      </Box>
-                      <Stepper orientation="vertical" activeStep={ELIGIBILITY_CHECKS.length}>
-                        {ELIGIBILITY_CHECKS.map((check) => {
-                          const result = eligibilityResults[check.field];
-                          return (
-                            <Step key={check.field} completed={result?.pass}>
-                              <StepLabel
-                                optional={
-                                  <Typography variant="caption" color="text.secondary">
-                                    {result?.detail}
-                                  </Typography>
-                                }
-                                error={result && !result.pass}
-                              >
-                                {check.step}
-                                {result?.pass ? (
-                                  <Chip label="Pass" size="small" color="success" sx={{ ml: 1 }} />
-                                ) : result ? (
-                                  <Chip label="Review" size="small" color="warning" sx={{ ml: 1 }} />
-                                ) : null}
-                              </StepLabel>
-                            </Step>
-                          );
-                        })}
-                      </Stepper>
-                      {eligibilityResults.overall === 'Conditional' && (
-                        <Button variant="outlined" sx={{ mt: 2 }} startIcon={<SendIcon />}>
-                          Request PCP Attestation
-                        </Button>
-                      )}
-                    </Paper>
-                  )}
-                </Grid>
-              </Grid>
-            </TabPanel>
-
-            <TabPanel value={tab} index={2}>
-              <FormControl size="small" sx={{ minWidth: 280, mb: 2 }}>
-                <InputLabel>Member</InputLabel>
-                <Select
-                  value={selectedMemberId}
-                  label="Member"
-                  onChange={(e) => setSelectedMemberId(e.target.value)}
-                >
-                  {CSNP_MEMBERS.map((m) => (
-                    <MenuItem key={m.id} value={m.id}>
-                      {m.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Measure</TableCell>
-                    <TableCell>Status</TableCell>
-                    <TableCell>Due date</TableCell>
-                    <TableCell>Priority</TableCell>
-                    <TableCell align="right">Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {selectedMember.careGaps.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={5} align="center">
-                        <Typography color="text.secondary" py={2}>
-                          No open care gaps — member is current on all measures.
-                        </Typography>
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    selectedMember.careGaps.map((gap) => (
-                      <TableRow key={gap.measure}>
-                        <TableCell>{gap.measure}</TableCell>
-                        <TableCell>
-                          <Chip label={gap.status} size="small" color={statusColor(gap.status)} />
-                        </TableCell>
-                        <TableCell>{gap.dueDate}</TableCell>
-                        <TableCell>
-                          <Chip label={gap.priority} size="small" color={statusColor(gap.priority)} />
-                        </TableCell>
-                        <TableCell align="right">
-                          {gap.status === 'Open' && (
-                            <Button size="small" onClick={() => setTab(4)}>
-                              Schedule outreach
-                            </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-              <Paper sx={{ p: 2, mt: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
-                <Typography variant="subtitle2" fontWeight={600} gutterBottom>
-                  Condition registry
-                </Typography>
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                  {selectedMember.qualifyingConditions.map((c) => (
-                    <Chip
-                      key={c.code}
-                      label={`${c.code} — ${c.description}`}
-                      variant="outlined"
-                      color={c.verified ? 'success' : 'warning'}
-                    />
-                  ))}
-                </Box>
-              </Paper>
-            </TabPanel>
-
-            <TabPanel value={tab} index={3}>
-              <Typography variant="subtitle2" fontWeight={600} gutterBottom>
-                Care team — {selectedMember.name}
-              </Typography>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 3 }}>
-                {selectedMember.careTeam.map((member) => (
-                  <Chip key={member} label={member} />
-                ))}
-              </Box>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Task</TableCell>
-                    <TableCell>Member</TableCell>
-                    <TableCell>Assignee</TableCell>
-                    <TableCell>Due</TableCell>
-                    <TableCell>Status</TableCell>
-                    <TableCell align="right" />
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {tasks.map((task) => (
-                    <TableRow key={task.id}>
-                      <TableCell>
-                        <Typography variant="body2" fontWeight={600}>
-                          {task.title}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {task.category}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>{task.memberName}</TableCell>
-                      <TableCell>{task.assignee}</TableCell>
-                      <TableCell>{task.dueDate}</TableCell>
-                      <TableCell>
-                        <Chip label={task.status} size="small" color={statusColor(task.status)} />
-                      </TableCell>
-                      <TableCell align="right">
-                        {task.status !== 'Completed' && (
-                          <Button
-                            size="small"
-                            startIcon={<TaskAltIcon />}
-                            onClick={() => completeTask(task.id)}
-                          >
-                            Complete
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TabPanel>
-
-            <TabPanel value={tab} index={4}>
-              {outreach.map((item) => (
-                <Paper key={item.id} variant="outlined" sx={{ p: 2, mb: 2, borderRadius: 2 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, mb: 1 }}>
-                    <Typography variant="subtitle1" fontWeight={600}>
-                      {item.memberName}
-                    </Typography>
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                      <Chip icon={<PhoneIcon />} label={item.channel} size="small" />
-                      <Chip label={item.status} size="small" color={statusColor(item.status)} />
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {w.memberId}
+                      </Typography>
+                      <Chip label={w.status} size="small" color={statusChip(w)} sx={{ mt: 0.5, height: 20 }} />
                     </Box>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary" gutterBottom>
-                    {item.reason} · Due {item.dueDate}
-                  </Typography>
-                  <Alert severity="info" sx={{ mb: 2, borderRadius: 2 }}>
-                    <Typography variant="body2">
-                      <strong>Outreach script:</strong> {item.script}
+                  ))}
+                </Paper>
+              </Grid>
+              <Grid size={{ xs: 12, md: 8 }}>
+                {selected && (
+                  <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 1.5 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                      <AccountTreeIcon color="primary" fontSize="small" />
+                      <Typography variant="caption" fontWeight={700}>
+                        Orchestrator Agent (Supervisor)
+                      </Typography>
+                    </Box>
+                    <Typography variant="caption" display="block" gutterBottom>
+                      {selected.memberName} · Stage: <strong>{selected.stage}</strong> · Plan:{' '}
+                      {selected.assignedPlanName || '—'}
                     </Typography>
-                  </Alert>
-                  {item.status !== 'Completed' && (
-                    <>
-                      <TextField
-                        fullWidth
-                        multiline
-                        rows={2}
-                        size="small"
-                        placeholder="Contact notes — disposition, barriers, next steps..."
-                        value={contactNotes[item.id] || ''}
-                        onChange={(e) =>
-                          setContactNotes((prev) => ({ ...prev, [item.id]: e.target.value }))
-                        }
-                        sx={{ mb: 1 }}
-                      />
+                    {selected.rejectionReason && (
+                      <Alert severity="error" sx={{ mb: 1, py: 0 }}>
+                        {selected.rejectionReason}
+                      </Alert>
+                    )}
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
                       <Button
                         variant="contained"
-                        size="small"
-                        startIcon={<SendIcon />}
-                        onClick={() => logOutreach(item.id)}
+                        startIcon={loading ? <CircularProgress size={14} color="inherit" /> : <PlayArrowIcon />}
+                        onClick={runLifecycle}
+                        disabled={loading}
                       >
-                        Log outreach & close
+                        Run full lifecycle
                       </Button>
-                    </>
-                  )}
-                </Paper>
+                      <Button variant="outlined" startIcon={<RefreshIcon />} onClick={runOrchestratorOnce} disabled={loading}>
+                        Single orchestrator step
+                      </Button>
+                    </Box>
+                    <Divider sx={{ my: 1 }} />
+                    <Typography variant="caption" fontWeight={600}>
+                      New enrollment (ICD-10)
+                    </Typography>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      placeholder="I50.9, E11.9"
+                      value={icdInput}
+                      onChange={(e) => setIcdInput(e.target.value)}
+                      sx={{ my: 0.5 }}
+                    />
+                    <Button size="small" onClick={startNewMemberWorkflow}>
+                      Create workflow
+                    </Button>
+                    {renderNextStepHint()}
+                  </Paper>
+                )}
+              </Grid>
+            </Grid>
+          </TabPanel>
+
+          <TabPanel value={tab} index={1}>
+            <Grid container spacing={1.5}>
+              <Grid size={{ xs: 12, md: 5 }}>
+                <FormControl fullWidth size="small" sx={{ mb: 1 }}>
+                  <InputLabel>Agent</InputLabel>
+                  <Select value={selectedAgent} label="Agent" onChange={(e) => setSelectedAgent(e.target.value)}>
+                    {CSNP_AGENT_ORDER.map((t) => (
+                      <MenuItem key={t} value={t}>
+                        {CSNP_AGENT_META[t]?.title}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                  {CSNP_AGENT_META[selectedAgent]?.subtitle}
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+                  <Button
+                    variant="contained"
+                    onClick={runSingleAgent}
+                    disabled={loading || !selected}
+                    startIcon={loading ? <CircularProgress size={14} color="inherit" /> : <PlayArrowIcon />}
+                  >
+                    Execute agent
+                  </Button>
+                  <Button size="small" variant="text" onClick={() => setActivityLog([])} disabled={activityLive}>
+                    Clear log
+                  </Button>
+                  <Button
+                    size="small"
+                    variant={activityLive ? 'contained' : 'outlined'}
+                    color="secondary"
+                    onClick={() => setTab(2)}
+                    sx={activityLive ? { animation: 'pulse 1.2s ease-in-out infinite' } : {}}
+                  >
+                    View Event bus
+                  </Button>
+                </Box>
+                {selected && renderNextStepHint()}
+                <TableContainer component={Paper} variant="outlined" sx={{ mt: 1.5, maxHeight: 140 }}>
+                  <Table size="small" stickyHeader>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Agent</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {CSNP_AGENT_ORDER.map((t) => (
+                        <TableRow
+                          key={t}
+                          selected={t === selectedAgent}
+                          hover
+                          onClick={() => setSelectedAgent(t)}
+                          sx={{ cursor: 'pointer' }}
+                        >
+                          <TableCell sx={{ fontSize: '0.65rem' }}>{CSNP_AGENT_META[t]?.title}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Grid>
+              <Grid size={{ xs: 12, md: 7 }}>
+                <CSNPAgentActivityStream
+                  activities={activityLog}
+                  live={activityLive}
+                  memberLabel={selected ? `${selected.memberId}` : undefined}
+                />
+              </Grid>
+            </Grid>
+          </TabPanel>
+
+          <TabPanel value={tab} index={2}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1, flexWrap: 'wrap', gap: 1 }}>
+              <Typography variant="caption" color="text.secondary">
+                Events stream as agents publish to <strong>csnp.lifecycle</strong>
+              </Typography>
+              {activityLive && (
+                <Chip label="LIVE" size="small" color="primary" sx={{ height: 20, animation: 'pulse 1s infinite' }} />
+              )}
+              <Button size="small" variant="text" onClick={() => setTab(1)} disabled={activityLive}>
+                Agent console
+              </Button>
+            </Box>
+            <CSNPEventBusStream
+              events={busEvents}
+              live={activityLive}
+              memberLabel={selected ? selected.memberId : undefined}
+            />
+          </TabPanel>
+
+          <TabPanel value={tab} index={3}>
+            <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+              Production test scenarios — idempotent execution per member
+            </Typography>
+            <List dense>
+              {TEST_SCENARIOS.map((s) => (
+                <ListItem
+                  key={s.id}
+                  secondaryAction={
+                    <Button size="small" startIcon={<ScienceIcon />} onClick={() => runScenario(s.id)} disabled={loading}>
+                      Run
+                    </Button>
+                  }
+                >
+                  <ListItemText primary={s.name} secondary={s.memberId} primaryTypographyProps={{ variant: 'caption', fontWeight: 600 }} />
+                </ListItem>
               ))}
-            </TabPanel>
+            </List>
+          </TabPanel>
 
-            <TabPanel value={tab} index={5}>
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Requirement</TableCell>
-                    <TableCell>Regulation</TableCell>
-                    <TableCell>Status</TableCell>
-                    <TableCell>Last review</TableCell>
-                    <TableCell>Next due</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {COMPLIANCE_ITEMS.map((item) => (
-                    <TableRow key={item.id}>
-                      <TableCell>
-                        <Typography variant="body2" fontWeight={600}>
-                          {item.requirement}
-                        </Typography>
-                        {item.detail && (
-                          <Typography variant="caption" color="error.main">
-                            {item.detail}
-                          </Typography>
-                        )}
-                      </TableCell>
-                      <TableCell>{item.regulation}</TableCell>
-                      <TableCell>
-                        <Chip
-                          label={item.status}
-                          size="small"
-                          color={statusColor(item.status)}
-                          icon={
-                            item.status === 'Action Required' ? (
-                              <ErrorOutlineIcon />
-                            ) : (
-                              <CheckCircleIcon />
-                            )
-                          }
-                        />
-                      </TableCell>
-                      <TableCell>{item.lastReview}</TableCell>
-                      <TableCell>{item.nextDue}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TabPanel>
-          </DialogContent>
-        </Paper>
-      </Box>
+          <TabPanel value={tab} index={4}>
+            <Grid container spacing={1}>
+              {CSNP_MEMBERS.map((m) => (
+                <Grid key={m.id} size={{ xs: 12, md: 6 }}>
+                  <Paper variant="outlined" sx={{ p: 1 }}>
+                    <Typography variant="caption" fontWeight={600}>
+                      {m.name}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      {m.id} · MBI {m.mbi} · {m.enrollmentStatus}
+                    </Typography>
+                    <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
+                      ICD: {(m.qualifyingConditions || []).map((c) => c.code).join(', ')}
+                    </Typography>
+                    <Button
+                      size="small"
+                      sx={{ mt: 0.5 }}
+                      onClick={() => {
+                        if (!workflows.some((w) => w.memberId === m.id)) {
+                          setWorkflows((prev) => [createInitialWorkflow(m), ...prev]);
+                        }
+                        setSelectedId(m.id);
+                        setTab(0);
+                      }}
+                    >
+                      Select workflow
+                    </Button>
+                  </Paper>
+                </Grid>
+              ))}
+            </Grid>
+          </TabPanel>
+        </DialogContent>
 
-      {snackbar && (
-        <Alert
-          severity="success"
-          onClose={() => setSnackbar(null)}
-          sx={{
-            position: 'fixed',
-            bottom: 24,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 1500,
-            minWidth: 320,
-            boxShadow: 4,
-          }}
-        >
-          {snackbar}
-        </Alert>
-      )}
-    </Dialog>
+        {snackbar && (
+          <Alert
+            severity={snackbar.severity}
+            onClose={() => setSnackbar(null)}
+            sx={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 1500, minWidth: 260 }}
+          >
+            {snackbar.message}
+          </Alert>
+        )}
+      </Dialog>
+    </ThemeProvider>
   );
 }
