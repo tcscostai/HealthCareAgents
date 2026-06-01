@@ -61,8 +61,7 @@ import {
   AGENT_TO_STAGE,
   COMPLIANCE_RESOLUTION_ACTIONS,
   COMPLIANCE_RULES,
-  DEMO_STORY_CASE_IDS,
-  DEMO_STORY_LABELS,
+  PRIORITY_WORK_QUEUE_CASE_IDS,
   DISPUTE_TYPE_OPTIONS,
   documentsToIntakeDocs,
   disputeToIntakeForm,
@@ -73,7 +72,7 @@ import {
   PIPELINE_STAGES,
   PLACE_OF_SERVICE_OPTIONS,
   REJECTION_REASONS,
-  sortDisputesWithDemosFirst,
+  sortDisputesWithPriorityFirst,
 } from '../../data/nsaIdrData';
 
 const compactTheme = createTheme({
@@ -222,6 +221,31 @@ function addTimeline(dispute, event, actor) {
   };
 }
 
+/** Stored disputes may only have summary compliance flags — always ensure rules[] before render. */
+function resolveComplianceResults(dispute, buildFn) {
+  const stored = dispute?.compliance;
+  if (!stored) return null;
+  if (Array.isArray(stored.rules) && stored.rules.length > 0) {
+    const allPass = stored.rules.every((r) => r.result === 'Pass' || r.result === 'N/A');
+    return {
+      applicable: Boolean(stored.applicable),
+      memberProtected: Boolean(stored.memberProtected ?? stored.applicable),
+      qpaCompliant: stored.qpaCompliant !== false,
+      rules: stored.rules,
+      overall: stored.overall ?? (allPass ? 'Compliant' : 'Review Required'),
+      supervisorOverride: stored.supervisorOverride,
+    };
+  }
+  const rebuilt = buildFn(dispute, { supervisorOverride: Boolean(stored.supervisorOverride) });
+  return {
+    ...rebuilt,
+    overall: stored.overall ?? rebuilt.overall,
+    applicable: stored.applicable ?? rebuilt.applicable,
+    memberProtected: stored.memberProtected ?? rebuilt.memberProtected,
+    qpaCompliant: stored.qpaCompliant ?? rebuilt.qpaCompliant,
+  };
+}
+
 function caseMatchesAgentStage(dispute, agentType) {
   const stage = AGENT_TO_STAGE[agentType];
   if (stage === 'case') {
@@ -244,11 +268,13 @@ function caseMatchesAgentStage(dispute, agentType) {
 }
 
 function buildWorkQueue(disputes, agentType) {
-  const demos = DEMO_STORY_CASE_IDS.map((id) => disputes.find((d) => d.id === id)).filter(Boolean);
-  const others = disputes.filter(
-    (d) => !DEMO_STORY_CASE_IDS.includes(d.id) && caseMatchesAgentStage(d, agentType)
+  const pinned = PRIORITY_WORK_QUEUE_CASE_IDS.map((id) => disputes.find((d) => d.id === id)).filter(
+    Boolean
   );
-  return [...demos, ...others];
+  const others = disputes.filter(
+    (d) => !PRIORITY_WORK_QUEUE_CASE_IDS.includes(d.id) && caseMatchesAgentStage(d, agentType)
+  );
+  return [...pinned, ...others];
 }
 
 export default function NSAIDRWorkspace({
@@ -315,13 +341,10 @@ export default function NSAIDRWorkspace({
   }, [selected]);
 
   useEffect(() => {
-    setComplianceResults(selected.compliance);
     if (agentType === 'idr-intake' && selected) {
       setIntakeForm(disputeToIntakeForm(selected));
       setIntakeDocs(documentsToIntakeDocs(selected.documents));
-      if (DEMO_STORY_CASE_IDS.includes(selected.id)) {
-        setIntakeStep(0);
-      }
+      setIntakeStep(0);
     }
     if (agentType === 'nsa-dispute-resolution' && selected) {
       const plan = Number(selected.planOffer) || 0;
@@ -432,6 +455,14 @@ export default function NSAIDRWorkspace({
       supervisorOverride: supervisorOverride || undefined,
     };
   }, []);
+
+  useEffect(() => {
+    if (agentType !== 'nsa-compliance') {
+      setComplianceResults(null);
+      return;
+    }
+    setComplianceResults(resolveComplianceResults(selected, buildComplianceForDispute));
+  }, [agentType, selectedId, selected, buildComplianceForDispute]);
 
   const runComplianceAnalysis = () => {
     setLoading(true);
@@ -809,19 +840,9 @@ export default function NSAIDRWorkspace({
             '&:hover': { bgcolor: 'action.hover' },
           }}
         >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
-            <Typography variant="caption" fontWeight={600}>
-              {d.id}
-            </Typography>
-            {DEMO_STORY_LABELS[d.id] && (
-              <Chip
-                label={DEMO_STORY_LABELS[d.id]}
-                size="small"
-                color={d.id === 'IDR-2026-0061' ? 'success' : 'info'}
-                sx={{ height: 18, fontSize: '0.55rem' }}
-              />
-            )}
-          </Box>
+          <Typography variant="caption" fontWeight={600}>
+            {d.id}
+          </Typography>
           <Typography variant="caption" color="text.secondary" display="block" sx={{ fontSize: '0.6rem' }}>
             {d.provider}
           </Typography>
@@ -854,9 +875,12 @@ export default function NSAIDRWorkspace({
   };
 
   const renderIntakeFlow = () => {
-    const isDemoCase = DEMO_STORY_CASE_IDS.includes(selected.id);
+    const useIntakeStepper =
+      selected.id === 'new' ||
+      PRIORITY_WORK_QUEUE_CASE_IDS.includes(selected.id) ||
+      selected.stage !== 'intake';
 
-    if (selected.stage === 'intake' && selected.id !== 'new' && !isDemoCase) {
+    if (selected.stage === 'intake' && selected.id !== 'new' && !useIntakeStepper) {
       return (
         <Box>
           <Alert severity="info" sx={{ mb: 1, borderRadius: 1.5 }}>
@@ -916,17 +940,6 @@ export default function NSAIDRWorkspace({
 
     return (
     <Box>
-      {isDemoCase && (
-        <Alert severity="success" sx={{ mb: 1, borderRadius: 1.5, py: 0 }}>
-          <Typography variant="caption" fontWeight={700} sx={{ fontSize: '0.65rem', display: 'block' }}>
-            {DEMO_STORY_LABELS[selected.id]}
-          </Typography>
-          <Typography variant="caption" sx={{ fontSize: '0.62rem' }}>
-            Provider, member, service, amounts, and documents auto-loaded — use steps 1–4 or jump to{' '}
-            <strong>Review</strong>.
-          </Typography>
-        </Alert>
-      )}
       <Stepper
         activeStep={intakeStep}
         alternativeLabel
@@ -1242,7 +1255,7 @@ export default function NSAIDRWorkspace({
               </TableRow>
             </TableHead>
             <TableBody>
-              {complianceResults.rules.map((r) => (
+              {(complianceResults.rules ?? []).map((r) => (
                 <TableRow key={r.id}>
                   <TableCell>{r.rule}</TableCell>
                   <TableCell>
@@ -1270,7 +1283,7 @@ export default function NSAIDRWorkspace({
                   Resolution required
                 </Typography>
                 <Typography variant="caption" sx={{ fontSize: '0.62rem' }}>
-                  {complianceResults.rules
+                  {(complianceResults.rules ?? [])
                     .filter((r) => r.result === 'Fail')
                     .map((r) => `${r.id}: ${r.rule.split('—')[0].trim()}`)
                     .join(' · ') || 'Address exceptions below, then re-run analysis.'}
@@ -1400,10 +1413,6 @@ export default function NSAIDRWorkspace({
               <strong>{selected.id}</strong> already has federal IDR filed
               {selected.arbitrationSubmitted ? ` (${selected.arbitrationSubmitted})` : ''}. Settlement to avoid IDR is
               not available for this case — use <strong>Record arbitration decision</strong> below.
-            </Typography>
-            <Typography variant="caption" sx={{ fontSize: '0.6rem', display: 'block', mt: 0.5, color: 'text.secondary' }}>
-              To demo <strong>avoiding IDR</strong>, select <strong>IDR-2026-0061</strong> (Ready for Dispute
-              Resolution) or run Compliance on <strong>IDR-2026-0042</strong> first, then return here.
             </Typography>
           </Alert>
         ) : (
@@ -1602,7 +1611,7 @@ export default function NSAIDRWorkspace({
             </TableRow>
           </TableHead>
           <TableBody>
-            {sortDisputesWithDemosFirst(disputes).map((d) => (
+            {sortDisputesWithPriorityFirst(disputes).map((d) => (
               <TableRow
                 key={d.id}
                 hover
@@ -1610,14 +1619,7 @@ export default function NSAIDRWorkspace({
                 onClick={() => setSelectedId(d.id)}
                 sx={{ cursor: 'pointer' }}
               >
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
-                    {d.id}
-                    {DEMO_STORY_LABELS[d.id] && (
-                      <Chip label={DEMO_STORY_LABELS[d.id]} size="small" sx={{ height: 18, fontSize: '0.55rem' }} />
-                    )}
-                  </Box>
-                </TableCell>
+                <TableCell>{d.id}</TableCell>
                 <TableCell sx={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {d.provider}
                 </TableCell>
@@ -1788,9 +1790,6 @@ export default function NSAIDRWorkspace({
               >
                 <Typography variant="caption" fontWeight={600} sx={{ mb: 0.5, fontSize: '0.65rem' }}>
                   {agentType === 'idr-intake' ? 'Recent cases' : 'Work queue'}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.55rem', display: 'block', mb: 0.5 }}>
-                  Story A & B always listed for demo
                 </Typography>
                 {renderCaseList()}
               </Grid>

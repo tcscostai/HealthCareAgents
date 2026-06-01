@@ -17,18 +17,8 @@ export const PIPELINE_STAGES = [
 /** Ordered flow — each agent hands off to the next */
 export const NSA_IDR_AGENT_ORDER = PIPELINE_STAGES.map((s) => s.agentType);
 
-/** Demo narratives — always pinned to top of every agent work queue. */
-export const DEMO_STORY_CASES = {
-  storyA: 'IDR-2026-0061',
-  storyB: 'IDR-2026-0031',
-};
-
-export const DEMO_STORY_CASE_IDS = [DEMO_STORY_CASES.storyA, DEMO_STORY_CASES.storyB];
-
-export const DEMO_STORY_LABELS = {
-  [DEMO_STORY_CASES.storyA]: 'Story A · Settle (avoid IDR)',
-  [DEMO_STORY_CASES.storyB]: 'Story B · Arbitration',
-};
+/** High-priority disputes pinned to the top of every agent work queue. */
+export const PRIORITY_WORK_QUEUE_CASE_IDS = ['IDR-2026-0061', 'IDR-2026-0031'];
 
 export function disputeToIntakeForm(dispute) {
   if (!dispute) return { ...INTAKE_FORM_DEFAULTS };
@@ -62,10 +52,12 @@ export function documentsToIntakeDocs(documents = []) {
   return out;
 }
 
-export function sortDisputesWithDemosFirst(disputes) {
-  const demos = DEMO_STORY_CASE_IDS.map((id) => disputes.find((d) => d.id === id)).filter(Boolean);
-  const rest = disputes.filter((d) => !DEMO_STORY_CASE_IDS.includes(d.id));
-  return [...demos, ...rest];
+export function sortDisputesWithPriorityFirst(disputes) {
+  const pinned = PRIORITY_WORK_QUEUE_CASE_IDS.map((id) => disputes.find((d) => d.id === id)).filter(
+    Boolean
+  );
+  const rest = disputes.filter((d) => !PRIORITY_WORK_QUEUE_CASE_IDS.includes(d.id));
+  return [...pinned, ...rest];
 }
 
 export const STAGE_TO_AGENT = Object.fromEntries(
