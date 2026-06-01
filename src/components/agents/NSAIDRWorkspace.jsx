@@ -41,6 +41,7 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
 import GavelIcon from '@mui/icons-material/Gavel';
+import HandshakeIcon from '@mui/icons-material/Handshake';
 import HubIcon from '@mui/icons-material/Hub';
 import PolicyIcon from '@mui/icons-material/Policy';
 import BuildIcon from '@mui/icons-material/Build';
@@ -190,7 +191,14 @@ const AGENT_STAGE_MAP = {
 const statusChipColor = (status) => {
   if (!status) return 'default';
   if (status.includes('New') || status.includes('Pending')) return 'warning';
-  if (status.includes('Approved') || status.includes('Resolved') || status.includes('Compliant')) return 'success';
+  if (
+    status.includes('Approved') ||
+    status.includes('Resolved') ||
+    status.includes('Compliant') ||
+    status.includes('Settled')
+  ) {
+    return 'success';
+  }
   if (status.includes('Incomplete') || status.includes('Rejected')) return 'error';
   if (status.includes('Arbitration') || status.includes('Review')) return 'info';
   return 'default';
@@ -223,7 +231,8 @@ function caseMatchesAgentStage(dispute, agentType) {
     return (
       dispute.stage === 'dispute' ||
       dispute.status.includes('Ready for Dispute') ||
-      dispute.status.includes('Arbitration')
+      dispute.status.includes('Arbitration') ||
+      dispute.status.includes('Settled in open negotiation')
     );
   }
   return dispute.stage === stage;
@@ -260,6 +269,8 @@ export default function NSAIDRWorkspace({
   const [rejectNotes, setRejectNotes] = useState('');
   const [arbitrationOutcome, setArbitrationOutcome] = useState('');
   const [finalAmount, setFinalAmount] = useState('');
+  const [settlementAmount, setSettlementAmount] = useState('');
+  const [settlementBasis, setSettlementBasis] = useState('Mutual agreement — QPA-informed');
   const [alertMessage, setAlertMessage] = useState('');
   const [closeOutcome, setCloseOutcome] = useState('Provider prevails');
 
@@ -294,7 +305,17 @@ export default function NSAIDRWorkspace({
     if (agentType === 'idr-intake' && selected.stage === 'intake') {
       setSelectedId(selected.id);
     }
-  }, [selectedId, agentType]);
+    if (agentType === 'nsa-dispute-resolution' && selected) {
+      const plan = Number(selected.planOffer) || 0;
+      const prov = Number(selected.providerOffer) || 0;
+      const suggested = plan && prov ? Math.round((plan + prov) / 2) : plan || prov;
+      setSettlementAmount(suggested ? String(suggested) : '');
+      if (selected.finalDetermination?.idrAvoided) {
+        setSettlementAmount(String(selected.finalDetermination.amount ?? ''));
+        setSettlementBasis(selected.finalDetermination.outcome || settlementBasis);
+      }
+    }
+  }, [selectedId, agentType, selected?.planOffer, selected?.providerOffer]);
 
   const updateDispute = useCallback((id, updater) => {
     setDisputes((prev) => prev.map((d) => (d.id === id ? updater(d) : d)));
@@ -333,7 +354,11 @@ export default function NSAIDRWorkspace({
     if (agentType === 'idr-validation' && selected.documents?.length) extras.push(`${validationScore}%`);
     if (agentType === 'nsa-compliance' && selected.compliance?.overall) extras.push(selected.compliance.overall);
     if (agentType === 'nsa-dispute-resolution' && selected.finalDetermination) {
-      extras.push(formatCurrency(selected.finalDetermination.amount));
+      extras.push(
+        selected.finalDetermination.idrAvoided
+          ? `Settled ${formatCurrency(selected.finalDetermination.amount)}`
+          : formatCurrency(selected.finalDetermination.amount)
+      );
     }
     return (
       <Box
@@ -625,7 +650,47 @@ export default function NSAIDRWorkspace({
     );
   };
 
+  const idrAvoided =
+    selected?.status?.includes('Settled in open negotiation') || selected?.finalDetermination?.idrAvoided;
+  const arbitrationFiled = selected?.status?.includes('Arbitration') && selected?.arbitrationSubmitted;
+
+  const recordOpenNegotiationSettlement = () => {
+    if (!String(settlementAmount || '').trim()) {
+      notify('Enter agreed settlement amount.', 'error');
+      return;
+    }
+    const amount = Number(settlementAmount);
+    if (Number.isNaN(amount) || amount <= 0) {
+      notify('Enter a valid settlement amount.', 'error');
+      return;
+    }
+    updateDispute(selected.id, (d) =>
+      addTimeline(
+        {
+          ...d,
+          stage: 'case',
+          status: 'Settled in open negotiation — IDR avoided',
+          finalDetermination: {
+            outcome: settlementBasis,
+            amount,
+            idrAvoided: true,
+          },
+        },
+        `Open negotiation settlement — ${formatCurrency(amount)} (${settlementBasis}); federal IDR not initiated`,
+        'NSA Dispute Resolution Agent'
+      )
+    );
+    routeToNextStage(
+      selected.id,
+      `Settlement recorded for ${selected.id}. Federal IDR avoided — open IDR Case Management to alert stakeholders and close.`
+    );
+  };
+
   const submitToFederalIdr = () => {
+    if (idrAvoided) {
+      notify('Case already settled in open negotiation. IDR was avoided.', 'error');
+      return;
+    }
     setLoading(true);
     setTimeout(() => {
       updateDispute(selected.id, (d) =>
@@ -1261,19 +1326,126 @@ export default function NSAIDRWorkspace({
         ))}
       </Grid>
       <NSANegotiationLogPanel dispute={selected} />
+
+      <Paper
+        variant="outlined"
+        sx={{
+          p: 1,
+          mb: 1,
+          borderRadius: 1.5,
+          borderColor: idrAvoided ? 'success.light' : 'divider',
+          bgcolor: idrAvoided ? 'rgba(52, 199, 89, 0.04)' : 'grey.50',
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
+          <HandshakeIcon sx={{ fontSize: 18, color: idrAvoided ? 'success.main' : 'text.secondary' }} />
+          <Box>
+            <Typography variant="caption" fontWeight={700} sx={{ fontSize: '0.68rem', display: 'block' }}>
+              Avoid federal IDR — settle in open negotiation
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.58rem' }}>
+              When plan and provider agree during the negotiation period, record settlement here — no arbitration
+              filing or IDR entity fees.
+            </Typography>
+          </Box>
+        </Box>
+        {idrAvoided ? (
+          <Alert severity="success" sx={{ borderRadius: 1.25, py: 0 }}>
+            <Typography variant="caption" sx={{ fontSize: '0.62rem' }}>
+              Settlement on file: <strong>{formatCurrency(selected.finalDetermination?.amount)}</strong> —{' '}
+              {selected.finalDetermination?.outcome}. Federal IDR was not required.
+            </Typography>
+          </Alert>
+        ) : arbitrationFiled ? (
+          <Alert severity="info" sx={{ borderRadius: 1.25, py: 0 }}>
+            <Typography variant="caption" sx={{ fontSize: '0.62rem', display: 'block' }}>
+              <strong>{selected.id}</strong> already has federal IDR filed
+              {selected.arbitrationSubmitted ? ` (${selected.arbitrationSubmitted})` : ''}. Settlement to avoid IDR is
+              not available for this case — use <strong>Record arbitration decision</strong> below.
+            </Typography>
+            <Typography variant="caption" sx={{ fontSize: '0.6rem', display: 'block', mt: 0.5, color: 'text.secondary' }}>
+              To demo <strong>avoiding IDR</strong>, select <strong>IDR-2026-0061</strong> (Ready for Dispute
+              Resolution) or run Compliance on <strong>IDR-2026-0042</strong> first, then return here.
+            </Typography>
+          </Alert>
+        ) : (
+          <Grid container spacing={1}>
+            <Grid size={{ xs: 12, md: 4 }}>
+              <TextField
+                fullWidth
+                size="small"
+                label="Agreed settlement amount"
+                type="number"
+                value={settlementAmount}
+                onChange={(e) => setSettlementAmount(e.target.value)}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 5 }}>
+              <FormControl fullWidth size="small">
+                <InputLabel>Settlement basis</InputLabel>
+                <Select
+                  value={settlementBasis}
+                  label="Settlement basis"
+                  onChange={(e) => setSettlementBasis(e.target.value)}
+                >
+                  <MenuItem value="Mutual agreement — QPA-informed">Mutual agreement — QPA-informed</MenuItem>
+                  <MenuItem value="Plan offer accepted by provider">Plan offer accepted by provider</MenuItem>
+                  <MenuItem value="Split between plan and provider offers">Split between plan and provider offers</MenuItem>
+                  <MenuItem value="Provider accepted plan QPA plus uplift">Provider accepted plan QPA plus uplift</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid size={{ xs: 12, md: 3 }}>
+              <Button
+                fullWidth
+                variant="contained"
+                color="success"
+                startIcon={<HandshakeIcon fontSize="small" />}
+                onClick={recordOpenNegotiationSettlement}
+                disabled={loading || arbitrationFiled}
+                sx={{ height: '100%', minHeight: 36 }}
+              >
+                Record settlement
+              </Button>
+            </Grid>
+          </Grid>
+        )}
+      </Paper>
+
+      <Divider sx={{ my: 1 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.58rem', px: 1 }}>
+          Or proceed to federal IDR
+        </Typography>
+      </Divider>
+
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
         <Button
           variant="contained"
           startIcon={loading ? <CircularProgress size={14} color="inherit" /> : <GavelIcon fontSize="small" />}
           onClick={submitToFederalIdr}
-          disabled={loading || selected.status.includes('Arbitration')}
+          disabled={loading || arbitrationFiled || idrAvoided}
         >
           Submit to federal IDR entity
         </Button>
+        {idrAvoided && (
+          <Chip label="IDR avoided" size="small" color="success" variant="outlined" sx={{ alignSelf: 'center' }} />
+        )}
+        {arbitrationFiled && !idrAvoided && (
+          <Chip
+            label={`IDR filed ${selected.arbitrationSubmitted || ''}`.trim()}
+            size="small"
+            color="info"
+            variant="outlined"
+            sx={{ alignSelf: 'center' }}
+          />
+        )}
       </Box>
       <Divider sx={{ my: 1 }} />
       <Typography variant="caption" fontWeight={600} display="block" sx={{ mb: 0.5 }}>
         Record arbitration decision
+        <Typography component="span" color="text.secondary" sx={{ fontSize: '0.58rem', ml: 0.5 }}>
+          (only if federal IDR was filed)
+        </Typography>
       </Typography>
       <Grid container spacing={1}>
         <Grid size={{ xs: 12, md: 4 }}>
@@ -1301,7 +1473,12 @@ export default function NSAIDRWorkspace({
           />
         </Grid>
         <Grid size={{ xs: 12, md: 4 }}>
-          <Button fullWidth variant="outlined" onClick={recordArbitrationDecision}>
+          <Button
+            fullWidth
+            variant="outlined"
+            onClick={recordArbitrationDecision}
+            disabled={idrAvoided && !arbitrationFiled}
+          >
             Save determination
           </Button>
         </Grid>

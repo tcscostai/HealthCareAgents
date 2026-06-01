@@ -82,14 +82,14 @@ export const AGENT_META = {
     subtitle: 'Independent Dispute Resolution and arbitration support',
     icon: 'gavel',
     userOutcomes: {
-      tagline: 'Agentic negotiation log · IDR submit',
+      tagline: 'Settle in negotiation or file IDR',
       signals: [
-        { label: 'Timeline intel', tone: 'info' },
-        { label: 'Offer / QPA', tone: 'default' },
+        { label: 'Avoid arbitration', tone: 'success' },
+        { label: 'Negotiation log', tone: 'info' },
         { label: '→ Case mgmt', tone: 'default' },
       ],
-      success: 'IDR filed',
-      blocked: 'Missing fields',
+      success: 'Settled or IDR filed',
+      blocked: 'Missing amount',
     },
   },
   'idr-case-management': {
@@ -220,6 +220,48 @@ export const INITIAL_DISPUTES = [
       { date: '2026-03-08', event: 'NSA compliance — applicable, member cost-sharing capped', actor: 'NSA Compliance Agent' },
       { date: '2026-04-10', event: 'Open negotiation period closed — IDR initiated', actor: 'NSA Dispute Resolution Agent' },
       { date: '2026-05-18', event: 'Submitted to federal IDR entity', actor: 'NSA Dispute Resolution Agent' },
+    ],
+  },
+  {
+    id: 'IDR-2026-0061',
+    provider: 'Lakeside Radiology Group',
+    npi: '1445566778',
+    tin: '88-9900112',
+    memberId: 'MBR-662401',
+    serviceDate: '2026-02-14',
+    placeOfService: 'Independent Diagnostic Testing Facility',
+    cptCodes: ['74177'],
+    billedAmount: 5100,
+    planOffer: 1400,
+    providerOffer: 3800,
+    qpa: 1350,
+    disputeType: 'Imaging — non-emergency OON',
+    stage: 'dispute',
+    status: 'Ready for Dispute Resolution',
+    federalIdrEligible: true,
+    intakeDate: '2026-04-20',
+    assignedTo: 'Priya Nair',
+    documents: [
+      { name: 'IDR Initiation Request', required: true, received: true },
+      { name: 'EOB / Claim Remittance', required: true, received: true },
+      { name: 'Provider Open Negotiation Notice', required: true, received: true },
+      { name: 'QPA Documentation', required: true, received: true },
+      { name: 'Clinical Records (if applicable)', required: false, received: true },
+    ],
+    compliance: {
+      applicable: true,
+      memberProtected: true,
+      qpaCompliant: true,
+      overall: 'Compliant',
+    },
+    validationScore: 100,
+    validationStatus: 'Approved',
+    negotiationDays: 32,
+    timeline: [
+      { date: '2026-04-20', event: 'IDR intake received', actor: 'System' },
+      { date: '2026-04-22', event: 'Validation approved — 100% completeness', actor: 'IDR Validation Agent' },
+      { date: '2026-04-25', event: 'NSA compliance analysis — Compliant', actor: 'NSA Compliance Agent' },
+      { date: '2026-05-28', event: 'Routed to dispute resolution — open negotiation in progress', actor: 'System' },
     ],
   },
   {
@@ -380,6 +422,9 @@ export function buildNegotiationIntel(dispute) {
         : null,
       qpa > 0 ? `QPA reference ${fmtUsd(qpa)} — plan offer within QPA-aligned band.` : null,
       dispute.disputeType ? `Dispute type: ${dispute.disputeType}.` : null,
+      planOffer > 0 && providerOffer > 0 && (providerOffer - planOffer) / planOffer <= 2.5
+        ? 'Agent recommendation: parties may settle in open negotiation — federal IDR can be avoided.'
+        : null,
     ].filter(Boolean),
   };
 }

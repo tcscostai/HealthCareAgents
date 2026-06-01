@@ -940,9 +940,23 @@ For cases already in the system (e.g. **IDR-2026-0055**):
 ### Panel
 
 1. **Offer stat cards** — Provider offer, Plan offer, QPA (color-coded).
-2. **Open negotiation log** — narrative generated from `planOffer`, `providerOffer`, `negotiationDays`.
-3. **Submit to federal IDR entity** (~1.8s load) — disabled if already in Arbitration.
-4. **Record arbitration decision** — Outcome select + Final allowed amount + Save.
+2. **Open negotiation log** — agentic reconstruction from `planOffer`, `providerOffer`, `negotiationDays` (may recommend settlement without IDR).
+3. **Avoid federal IDR — settle in open negotiation** — agreed amount + settlement basis → **Record settlement** (IDR avoided).
+4. **Or proceed to federal IDR** — **Submit to federal IDR entity** (~1.8s load) — disabled if already settled or in Arbitration.
+5. **Record arbitration decision** — only when federal IDR was filed; outcome + final allowed amount.
+
+### Open negotiation settlement (avoid arbitration)
+
+| Field | Value |
+|-------|-------|
+| `stage` | `case` |
+| `status` | `Settled in open negotiation — IDR avoided` |
+| `finalDetermination` | `{ outcome, amount, idrAvoided: true }` |
+| `arbitrationSubmitted` | *(not set — no federal IDR filing)* |
+
+**When to use:** Parties reach agreement during the 30-day open negotiation period; plan and provider accept a dollar amount without certified IDR entity or arbitration fees.
+
+**UI:** Green success panel after settlement; **Submit to federal IDR** disabled; handoff to **IDR Case Management** to alert stakeholders and close as *Settled in negotiation*.
 
 ### Federal IDR submission
 
