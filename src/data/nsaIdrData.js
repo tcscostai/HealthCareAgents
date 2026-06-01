@@ -17,6 +17,57 @@ export const PIPELINE_STAGES = [
 /** Ordered flow — each agent hands off to the next */
 export const NSA_IDR_AGENT_ORDER = PIPELINE_STAGES.map((s) => s.agentType);
 
+/** Demo narratives — always pinned to top of every agent work queue. */
+export const DEMO_STORY_CASES = {
+  storyA: 'IDR-2026-0061',
+  storyB: 'IDR-2026-0031',
+};
+
+export const DEMO_STORY_CASE_IDS = [DEMO_STORY_CASES.storyA, DEMO_STORY_CASES.storyB];
+
+export const DEMO_STORY_LABELS = {
+  [DEMO_STORY_CASES.storyA]: 'Story A · Settle (avoid IDR)',
+  [DEMO_STORY_CASES.storyB]: 'Story B · Arbitration',
+};
+
+export function disputeToIntakeForm(dispute) {
+  if (!dispute) return { ...INTAKE_FORM_DEFAULTS };
+  return {
+    providerName: dispute.provider || '',
+    npi: dispute.npi || '',
+    tin: dispute.tin || '',
+    memberId: dispute.memberId || '',
+    serviceDate: dispute.serviceDate || '',
+    placeOfService: dispute.placeOfService || INTAKE_FORM_DEFAULTS.placeOfService,
+    disputeType: dispute.disputeType || '',
+    billedAmount: dispute.billedAmount != null ? String(dispute.billedAmount) : '',
+    planOffer: dispute.planOffer != null ? String(dispute.planOffer) : '',
+    providerOffer: dispute.providerOffer != null ? String(dispute.providerOffer) : '',
+  };
+}
+
+const INTAKE_DOC_NAMES = [
+  'IDR Initiation Request',
+  'EOB / Claim Remittance',
+  'Provider Open Negotiation Notice',
+  'QPA Documentation',
+];
+
+export function documentsToIntakeDocs(documents = []) {
+  const out = {};
+  INTAKE_DOC_NAMES.forEach((name) => {
+    const found = documents.find((d) => d.name === name);
+    out[name] = Boolean(found?.received);
+  });
+  return out;
+}
+
+export function sortDisputesWithDemosFirst(disputes) {
+  const demos = DEMO_STORY_CASE_IDS.map((id) => disputes.find((d) => d.id === id)).filter(Boolean);
+  const rest = disputes.filter((d) => !DEMO_STORY_CASE_IDS.includes(d.id));
+  return [...demos, ...rest];
+}
+
 export const STAGE_TO_AGENT = Object.fromEntries(
   PIPELINE_STAGES.map((s) => [s.key, s.agentType])
 );

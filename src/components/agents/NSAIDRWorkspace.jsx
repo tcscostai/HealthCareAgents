@@ -61,7 +61,11 @@ import {
   AGENT_TO_STAGE,
   COMPLIANCE_RESOLUTION_ACTIONS,
   COMPLIANCE_RULES,
+  DEMO_STORY_CASE_IDS,
+  DEMO_STORY_LABELS,
   DISPUTE_TYPE_OPTIONS,
+  documentsToIntakeDocs,
+  disputeToIntakeForm,
   getAgentLabel,
   getNextAgentType,
   INITIAL_DISPUTES,
@@ -69,6 +73,7 @@ import {
   PIPELINE_STAGES,
   PLACE_OF_SERVICE_OPTIONS,
   REJECTION_REASONS,
+  sortDisputesWithDemosFirst,
 } from '../../data/nsaIdrData';
 
 const compactTheme = createTheme({
@@ -238,6 +243,14 @@ function caseMatchesAgentStage(dispute, agentType) {
   return dispute.stage === stage;
 }
 
+function buildWorkQueue(disputes, agentType) {
+  const demos = DEMO_STORY_CASE_IDS.map((id) => disputes.find((d) => d.id === id)).filter(Boolean);
+  const others = disputes.filter(
+    (d) => !DEMO_STORY_CASE_IDS.includes(d.id) && caseMatchesAgentStage(d, agentType)
+  );
+  return [...demos, ...others];
+}
+
 export default function NSAIDRWorkspace({
   open,
   onClose,
@@ -252,7 +265,9 @@ export default function NSAIDRWorkspace({
   const disputes = disputesProp ?? disputesInternal;
   const setDisputes = onDisputesChange ?? setDisputesInternal;
 
-  const [selectedId, setSelectedId] = useState(disputes[0]?.id ?? INITIAL_DISPUTES[0].id);
+  const [selectedId, setSelectedId] = useState(
+    disputes.find((d) => d.id === 'IDR-2026-0061')?.id ?? disputes[0]?.id ?? INITIAL_DISPUTES[0].id
+  );
   const [snackbar, setSnackbar] = useState(null); // { message, severity: 'success' | 'error' | 'warning' }
   const [loading, setLoading] = useState(false);
 
@@ -301,9 +316,12 @@ export default function NSAIDRWorkspace({
 
   useEffect(() => {
     setComplianceResults(selected.compliance);
-    setIntakeStep(0);
-    if (agentType === 'idr-intake' && selected.stage === 'intake') {
-      setSelectedId(selected.id);
+    if (agentType === 'idr-intake' && selected) {
+      setIntakeForm(disputeToIntakeForm(selected));
+      setIntakeDocs(documentsToIntakeDocs(selected.documents));
+      if (DEMO_STORY_CASE_IDS.includes(selected.id)) {
+        setIntakeStep(0);
+      }
     }
     if (agentType === 'nsa-dispute-resolution' && selected) {
       const plan = Number(selected.planOffer) || 0;
@@ -757,10 +775,7 @@ export default function NSAIDRWorkspace({
     notify(`Case ${selected.id} closed and archived.`);
   };
 
-  const queueForAgent = useMemo(
-    () => disputes.filter((d) => caseMatchesAgentStage(d, agentType)),
-    [disputes, agentType]
-  );
+  const queueForAgent = useMemo(() => buildWorkQueue(disputes, agentType), [disputes, agentType]);
 
   useEffect(() => {
     if (queueForAgent.length > 0 && !queueForAgent.some((d) => d.id === selectedId)) {
@@ -778,7 +793,7 @@ export default function NSAIDRWorkspace({
         overflow: 'auto',
       }}
     >
-      {(queueForAgent.length ? queueForAgent : disputes).map((d) => (
+      {queueForAgent.map((d) => (
         <Box
           key={d.id}
           onClick={() => {
@@ -794,9 +809,19 @@ export default function NSAIDRWorkspace({
             '&:hover': { bgcolor: 'action.hover' },
           }}
         >
-          <Typography variant="caption" fontWeight={600} display="block">
-            {d.id}
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+            <Typography variant="caption" fontWeight={600}>
+              {d.id}
+            </Typography>
+            {DEMO_STORY_LABELS[d.id] && (
+              <Chip
+                label={DEMO_STORY_LABELS[d.id]}
+                size="small"
+                color={d.id === 'IDR-2026-0061' ? 'success' : 'info'}
+                sx={{ height: 18, fontSize: '0.55rem' }}
+              />
+            )}
+          </Box>
           <Typography variant="caption" color="text.secondary" display="block" sx={{ fontSize: '0.6rem' }}>
             {d.provider}
           </Typography>
@@ -829,7 +854,9 @@ export default function NSAIDRWorkspace({
   };
 
   const renderIntakeFlow = () => {
-    if (selected.stage === 'intake' && selected.id !== 'new') {
+    const isDemoCase = DEMO_STORY_CASE_IDS.includes(selected.id);
+
+    if (selected.stage === 'intake' && selected.id !== 'new' && !isDemoCase) {
       return (
         <Box>
           <Alert severity="info" sx={{ mb: 1, borderRadius: 1.5 }}>
@@ -889,6 +916,17 @@ export default function NSAIDRWorkspace({
 
     return (
     <Box>
+      {isDemoCase && (
+        <Alert severity="success" sx={{ mb: 1, borderRadius: 1.5, py: 0 }}>
+          <Typography variant="caption" fontWeight={700} sx={{ fontSize: '0.65rem', display: 'block' }}>
+            {DEMO_STORY_LABELS[selected.id]}
+          </Typography>
+          <Typography variant="caption" sx={{ fontSize: '0.62rem' }}>
+            Provider, member, service, amounts, and documents auto-loaded — use steps 1–4 or jump to{' '}
+            <strong>Review</strong>.
+          </Typography>
+        </Alert>
+      )}
       <Stepper
         activeStep={intakeStep}
         alternativeLabel
@@ -1564,7 +1602,7 @@ export default function NSAIDRWorkspace({
             </TableRow>
           </TableHead>
           <TableBody>
-            {disputes.map((d) => (
+            {sortDisputesWithDemosFirst(disputes).map((d) => (
               <TableRow
                 key={d.id}
                 hover
@@ -1572,7 +1610,14 @@ export default function NSAIDRWorkspace({
                 onClick={() => setSelectedId(d.id)}
                 sx={{ cursor: 'pointer' }}
               >
-                <TableCell>{d.id}</TableCell>
+                <TableCell>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                    {d.id}
+                    {DEMO_STORY_LABELS[d.id] && (
+                      <Chip label={DEMO_STORY_LABELS[d.id]} size="small" sx={{ height: 18, fontSize: '0.55rem' }} />
+                    )}
+                  </Box>
+                </TableCell>
                 <TableCell sx={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {d.provider}
                 </TableCell>
@@ -1743,6 +1788,9 @@ export default function NSAIDRWorkspace({
               >
                 <Typography variant="caption" fontWeight={600} sx={{ mb: 0.5, fontSize: '0.65rem' }}>
                   {agentType === 'idr-intake' ? 'Recent cases' : 'Work queue'}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.55rem', display: 'block', mb: 0.5 }}>
+                  Story A & B always listed for demo
                 </Typography>
                 {renderCaseList()}
               </Grid>
