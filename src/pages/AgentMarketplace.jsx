@@ -18,7 +18,7 @@ import UnfoldMoreIcon from '@mui/icons-material/UnfoldMore';
 import UnfoldLessIcon from '@mui/icons-material/UnfoldLess';
 import AgentDetailDialog from '../components/AgentDetailDialog';
 import NSAAgentOutcomesPanel from '../components/agents/NSAAgentOutcomesPanel';
-import { AGENT_META, INITIAL_DISPUTES, NSA_IDR_AGENT_TYPES } from '../data/nsaIdrData';
+import { AGENT_META, INITIAL_DISPUTES, NSA_IDR_AGENT_ORDER, NSA_IDR_AGENT_TYPES } from '../data/nsaIdrData';
 
 const CSNPIntelligenceWorkspace = lazy(() => import('../components/agents/CSNPIntelligenceWorkspace'));
 const NSAIDRWorkspace = lazy(() => import('../components/agents/NSAIDRWorkspace'));
@@ -315,7 +315,13 @@ export default function AgentMarketplace() {
 
                   <Collapse in={!isCollapsed} timeout="auto">
                     <Grid container spacing={2} sx={{ mt: 2 }}>
-                      {category.subAgents.map((agent) => {
+                      {(category.value === 'no_surprises_act'
+                        ? [...category.subAgents].sort(
+                            (a, b) =>
+                              NSA_IDR_AGENT_ORDER.indexOf(a.type) - NSA_IDR_AGENT_ORDER.indexOf(b.type)
+                          )
+                        : category.subAgents
+                      ).map((agent) => {
                         const AgentIcon = agent.icon;
                         const nsaOutcomes =
                           category.value === 'no_surprises_act' ? AGENT_META[agent.type]?.userOutcomes : null;

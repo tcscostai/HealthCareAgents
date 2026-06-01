@@ -1,8 +1,8 @@
 export const NSA_IDR_AGENT_TYPES = [
-  'nsa-compliance',
-  'nsa-dispute-resolution',
   'idr-intake',
   'idr-validation',
+  'nsa-compliance',
+  'nsa-dispute-resolution',
   'idr-case-management',
 ];
 
