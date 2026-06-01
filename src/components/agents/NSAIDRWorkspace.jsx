@@ -43,15 +43,22 @@ import FactCheckIcon from '@mui/icons-material/FactCheck';
 import GavelIcon from '@mui/icons-material/Gavel';
 import HubIcon from '@mui/icons-material/Hub';
 import PolicyIcon from '@mui/icons-material/Policy';
+import BuildIcon from '@mui/icons-material/Build';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import ReplayIcon from '@mui/icons-material/Replay';
 import SendIcon from '@mui/icons-material/Send';
+import UndoIcon from '@mui/icons-material/Undo';
+import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import StorageIcon from '@mui/icons-material/Storage';
 import TimelineIcon from '@mui/icons-material/Timeline';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import NSAAgentOutcomesPanel from './NSAAgentOutcomesPanel';
+import NSANegotiationLogPanel from './NSANegotiationLogPanel';
 import {
   AGENT_META,
   AGENT_TO_STAGE,
+  COMPLIANCE_RESOLUTION_ACTIONS,
   COMPLIANCE_RULES,
   DISPUTE_TYPE_OPTIONS,
   getAgentLabel,
@@ -320,30 +327,75 @@ export default function NSAIDRWorkspace({
     );
   };
 
+  const renderSelectedCaseOutcome = () => {
+    if (!selected || (agentType === 'idr-intake' && intakeStep > 0 && selected.id === 'new')) return null;
+    const extras = [];
+    if (agentType === 'idr-validation' && selected.documents?.length) extras.push(`${validationScore}%`);
+    if (agentType === 'nsa-compliance' && selected.compliance?.overall) extras.push(selected.compliance.overall);
+    if (agentType === 'nsa-dispute-resolution' && selected.finalDetermination) {
+      extras.push(formatCurrency(selected.finalDetermination.amount));
+    }
+    return (
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.5,
+          mb: 1,
+          px: 0.75,
+          py: 0.5,
+          borderRadius: 1,
+          bgcolor: 'grey.50',
+          border: '1px solid',
+          borderColor: 'divider',
+          width: 'fit-content',
+          maxWidth: '100%',
+          flexWrap: 'wrap',
+        }}
+      >
+        <Typography sx={{ fontSize: '0.58rem', fontWeight: 600, color: 'text.secondary' }}>
+          Selected case
+        </Typography>
+        <Chip label={selected.status} size="small" color={statusChipColor(selected.status)} sx={{ height: 20 }} />
+        {extras.map((x) => (
+          <Chip key={x} label={x} size="small" variant="outlined" sx={{ height: 20, fontSize: '0.58rem' }} />
+        ))}
+      </Box>
+    );
+  };
+
+  const buildComplianceForDispute = useCallback((dispute, { supervisorOverride = false } = {}) => {
+    const applicable =
+      dispute.placeOfService?.includes('Emergency') || (dispute.billedAmount ?? 0) > 1000;
+    const results = COMPLIANCE_RULES.map((r) => ({
+      ...r,
+      result: supervisorOverride
+        ? 'Pass'
+        : r.id === 'R5' && !dispute.disputeType?.includes('ambulance')
+          ? 'N/A'
+          : r.id === 'R4'
+            ? (dispute.negotiationDays ?? 0) >= 30
+              ? 'Pass'
+              : 'Fail'
+            : 'Pass',
+    }));
+    const allPass = results.every((r) => r.result === 'Pass' || r.result === 'N/A');
+    return {
+      applicable,
+      memberProtected: applicable,
+      qpaCompliant: true,
+      rules: results,
+      overall: allPass ? 'Compliant' : 'Review Required',
+      supervisorOverride: supervisorOverride || undefined,
+    };
+  }, []);
+
   const runComplianceAnalysis = () => {
     setLoading(true);
     setComplianceResults(null);
     setTimeout(() => {
-      const applicable = selected.placeOfService.includes('Emergency') || selected.billedAmount > 1000;
-      const results = COMPLIANCE_RULES.map((r) => ({
-        ...r,
-        result:
-          r.id === 'R5' && !selected.disputeType.includes('ambulance')
-            ? 'N/A'
-            : r.id === 'R4'
-              ? selected.negotiationDays >= 30
-                ? 'Pass'
-                : 'Fail'
-              : 'Pass',
-      }));
-      const allPass = results.every((r) => r.result === 'Pass' || r.result === 'N/A');
-      const compliance = {
-        applicable,
-        memberProtected: applicable,
-        qpaCompliant: true,
-        rules: results,
-        overall: allPass ? 'Compliant' : 'Review Required',
-      };
+      const compliance = buildComplianceForDispute(selected);
+      const allPass = compliance.overall === 'Compliant';
       setComplianceResults(compliance);
       updateDispute(selected.id, (d) =>
         addTimeline(
@@ -361,9 +413,113 @@ export default function NSAIDRWorkspace({
       if (allPass) {
         routeToNextStage(selected.id, 'Compliance complete.');
       } else {
-        notify('Compliance analysis complete. Resolve exceptions before dispute resolution.', 'error');
+        const failed = compliance.rules.filter((r) => r.result === 'Fail').map((r) => r.id);
+        notify(
+          failed.length
+            ? `Exceptions: ${failed.join(', ')}. Use resolution actions below, then re-run analysis.`
+            : 'Review required. Use resolution actions below.',
+          'error'
+        );
       }
     }, 2200);
+  };
+
+  const applyComplianceResolution = (actionId) => {
+    const action = COMPLIANCE_RESOLUTION_ACTIONS.find((a) => a.id === actionId);
+    if (!action) return;
+
+    updateDispute(selected.id, (d) => {
+      let next = d;
+      switch (actionId) {
+        case 'extend-negotiation':
+          next = addTimeline(
+            { ...d, negotiationDays: 30 },
+            'Open negotiation certified — 30 calendar days documented (R4 remediation)',
+            'NSA Compliance Agent'
+          );
+          break;
+        case 'index-negotiation-notice': {
+          const documents = d.documents.map((doc) =>
+            doc.name.toLowerCase().includes('negotiation') ? { ...doc, received: true } : doc
+          );
+          const required = documents.filter((doc) => doc.required);
+          const score = required.length
+            ? Math.round((required.filter((doc) => doc.received).length / required.length) * 100)
+            : d.validationScore;
+          next = addTimeline(
+            {
+              ...d,
+              documents,
+              validationScore: score,
+              validationStatus: score >= 80 ? 'Approved' : d.validationStatus,
+            },
+            'Provider Open Negotiation Notice indexed — evidence updated',
+            'NSA Compliance Agent'
+          );
+          break;
+        }
+        case 'request-corrected-qpa':
+          next = addTimeline(
+            { ...d, status: 'Compliance Review — QPA rework requested' },
+            'Corrected QPA package requested from plan actuarial',
+            'NSA Compliance Agent'
+          );
+          break;
+        case 'return-validation':
+          next = addTimeline(
+            {
+              ...d,
+              stage: 'validation',
+              status: 'Pending Validation',
+              assignedTo: 'Validation Queue',
+            },
+            'Returned to validation — resolve evidence gaps before compliance re-review',
+            'NSA Compliance Agent'
+          );
+          break;
+        case 'supervisor-override':
+          next = addTimeline(
+            {
+              ...d,
+              stage: 'dispute',
+              status: 'Ready for Dispute Resolution — supervisor attested',
+            },
+            'Supervisor override — documented exception; cleared for dispute resolution',
+            'NSA Compliance Agent'
+          );
+          break;
+        default:
+          break;
+      }
+
+      const compliance =
+        actionId === 'supervisor-override'
+          ? buildComplianceForDispute(next, { supervisorOverride: true })
+          : buildComplianceForDispute(next);
+
+      if (actionId === 'supervisor-override') {
+        next = { ...next, compliance };
+      } else if (actionId !== 'return-validation') {
+        next = { ...next, compliance };
+      }
+
+      queueMicrotask(() => setComplianceResults(compliance));
+      return next;
+    });
+
+    const messages = {
+      'extend-negotiation': 'Negotiation period updated to 30 days. Re-run compliance analysis.',
+      'index-negotiation-notice': 'Open negotiation notice indexed. Re-run compliance analysis.',
+      'request-corrected-qpa': 'QPA rework requested. Await package, then re-run analysis.',
+      'return-validation': 'Case returned to validation. Open IDR Validation Agent on the marketplace.',
+      'supervisor-override': 'Supervisor override recorded. Open NSA Dispute Resolution Agent.',
+    };
+    notify(messages[actionId] || 'Resolution applied.', 'success');
+    if (actionId === 'return-validation') {
+      routeToNextStage(selected.id, 'Case returned to validation queue.');
+    } else if (actionId === 'supervisor-override') {
+      routeToNextStage(selected.id, 'Override complete — proceed to dispute resolution.');
+    }
   };
 
   const submitIntake = () => {
@@ -1004,6 +1160,81 @@ export default function NSAIDRWorkspace({
               </Button>
             </>
           )}
+          {complianceResults.overall !== 'Compliant' && (
+            <Box sx={{ mt: 1.25 }}>
+              <Alert severity="error" sx={{ mb: 1, borderRadius: 1.5 }} icon={false}>
+                <Typography variant="caption" fontWeight={700} display="block" sx={{ fontSize: '0.65rem', mb: 0.5 }}>
+                  Resolution required
+                </Typography>
+                <Typography variant="caption" sx={{ fontSize: '0.62rem' }}>
+                  {complianceResults.rules
+                    .filter((r) => r.result === 'Fail')
+                    .map((r) => `${r.id}: ${r.rule.split('—')[0].trim()}`)
+                    .join(' · ') || 'Address exceptions below, then re-run analysis.'}
+                </Typography>
+              </Alert>
+              <Typography variant="caption" fontWeight={700} sx={{ fontSize: '0.62rem', display: 'block', mb: 0.75 }}>
+                Resolution actions
+              </Typography>
+              <Grid container spacing={0.75}>
+                {COMPLIANCE_RESOLUTION_ACTIONS.filter((a) => a.visible(selected)).map((action) => (
+                  <Grid key={action.id} size={{ xs: 12, sm: 6 }}>
+                    <Paper
+                      variant="outlined"
+                      sx={{
+                        p: 1,
+                        borderRadius: 1.5,
+                        height: '100%',
+                        borderColor: 'rgba(255, 149, 0, 0.45)',
+                        bgcolor: 'rgba(255, 149, 0, 0.04)',
+                      }}
+                    >
+                      <Typography variant="caption" fontWeight={700} display="block" sx={{ fontSize: '0.65rem' }}>
+                        {action.label}
+                      </Typography>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ fontSize: '0.58rem', display: 'block', mb: 0.75, minHeight: 28 }}
+                      >
+                        {action.description}
+                      </Typography>
+                      <Button
+                        fullWidth
+                        size="small"
+                        variant="contained"
+                        color={action.id === 'supervisor-override' ? 'warning' : 'primary'}
+                        startIcon={
+                          action.id === 'extend-negotiation' ? (
+                            <BuildIcon fontSize="small" />
+                          ) : action.id === 'return-validation' ? (
+                            <UndoIcon fontSize="small" />
+                          ) : action.id === 'supervisor-override' ? (
+                            <VerifiedUserIcon fontSize="small" />
+                          ) : (
+                            <SendIcon fontSize="small" />
+                          )
+                        }
+                        onClick={() => applyComplianceResolution(action.id)}
+                      >
+                        Apply
+                      </Button>
+                    </Paper>
+                  </Grid>
+                ))}
+              </Grid>
+              <Button
+                fullWidth
+                variant="outlined"
+                sx={{ mt: 1 }}
+                startIcon={<ReplayIcon fontSize="small" />}
+                onClick={runComplianceAnalysis}
+                disabled={loading}
+              >
+                Re-run compliance analysis
+              </Button>
+            </Box>
+          )}
         </>
       )}
     </Box>
@@ -1029,20 +1260,7 @@ export default function NSAIDRWorkspace({
           </Grid>
         ))}
       </Grid>
-      <Paper variant="outlined" sx={{ p: 1, mb: 1, borderRadius: 1.5 }}>
-        <Typography variant="caption" fontWeight={600} display="block" sx={{ mb: 0.5 }}>
-          Open negotiation log
-        </Typography>
-        <Typography variant="caption" color="text.secondary" display="block">
-          Day 1 — Plan initial offer {formatCurrency(selected.planOffer)} sent to provider.
-        </Typography>
-        <Typography variant="caption" color="text.secondary" display="block">
-          Day 18 — Provider counter {formatCurrency(selected.providerOffer)}; plan maintained QPA-based offer.
-        </Typography>
-        <Typography variant="caption" color="text.secondary" display="block">
-          Day {selected.negotiationDays} — Negotiation closed. Federal IDR eligible.
-        </Typography>
-      </Paper>
+      <NSANegotiationLogPanel dispute={selected} />
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
         <Button
           variant="contained"
@@ -1260,6 +1478,8 @@ export default function NSAIDRWorkspace({
             </Typography>
           </Alert>
 
+          <NSAAgentOutcomesPanel outcomes={meta.userOutcomes} variant="workspace" />
+
           <Grid container spacing={0.75} sx={{ mb: 0.75 }}>
             {[
               { label: 'Open disputes', value: portfolioStats.open },
@@ -1364,6 +1584,7 @@ export default function NSAIDRWorkspace({
                   </Typography>
                 </Paper>
               )}
+              {renderSelectedCaseOutcome()}
               {renderAgentPanel()}
               {renderNextStepHint()}
             </Grid>

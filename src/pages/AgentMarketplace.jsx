@@ -17,7 +17,8 @@ import SearchIcon from '@mui/icons-material/Search';
 import UnfoldMoreIcon from '@mui/icons-material/UnfoldMore';
 import UnfoldLessIcon from '@mui/icons-material/UnfoldLess';
 import AgentDetailDialog from '../components/AgentDetailDialog';
-import { INITIAL_DISPUTES, NSA_IDR_AGENT_TYPES } from '../data/nsaIdrData';
+import NSAAgentOutcomesPanel from '../components/agents/NSAAgentOutcomesPanel';
+import { AGENT_META, INITIAL_DISPUTES, NSA_IDR_AGENT_TYPES } from '../data/nsaIdrData';
 
 const CSNPIntelligenceWorkspace = lazy(() => import('../components/agents/CSNPIntelligenceWorkspace'));
 const NSAIDRWorkspace = lazy(() => import('../components/agents/NSAIDRWorkspace'));
@@ -316,6 +317,8 @@ export default function AgentMarketplace() {
                     <Grid container spacing={2} sx={{ mt: 2 }}>
                       {category.subAgents.map((agent) => {
                         const AgentIcon = agent.icon;
+                        const nsaOutcomes =
+                          category.value === 'no_surprises_act' ? AGENT_META[agent.type]?.userOutcomes : null;
                         return (
                           <Grid key={agent.id} size={{ xs: 12, sm: 6, md: 4 }}>
                             <AgentCard
@@ -361,7 +364,7 @@ export default function AgentMarketplace() {
                                 variant="body2"
                                 color="text.secondary"
                                 sx={{
-                                  mb: 2,
+                                  mb: nsaOutcomes ? 1 : 2,
                                   flex: 1,
                                   display: '-webkit-box',
                                   WebkitLineClamp: 3,
@@ -371,6 +374,13 @@ export default function AgentMarketplace() {
                               >
                                 {agent.description}
                               </Typography>
+                              {nsaOutcomes && (
+                                <NSAAgentOutcomesPanel
+                                  outcomes={nsaOutcomes}
+                                  variant="card"
+                                  accent={category.color}
+                                />
+                              )}
                               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
                                 {(agent.features || []).slice(0, 3).map((feature) => (
                                   <Chip

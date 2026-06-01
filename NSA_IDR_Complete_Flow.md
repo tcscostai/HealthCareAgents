@@ -2,7 +2,7 @@
 
 This document describes the **end-to-end Independent Dispute Resolution (IDR)** workflow implemented in the Healthcare AI Agent Marketplace for the **No Surprises Act & IDR** category. It covers all **five marketplace agent cards**, how they connect, shared case data, validation rules, and the **reference dispute portfolio** used in operations.
 
-**Operators:** For how to open each agent card, move cases through the pipeline, and read AI intervention outcomes (work queue, stepper, toasts, next-step hints, timeline), start at **§4 User navigation — viewing AI intervention outcomes**.
+**Operators:** For how to open each agent card, move cases through the pipeline, and **what outcomes users see on screen from each agent** (alerts, scores, rule results, status chips, toasts, timeline), start at **§4 User navigation — viewing AI intervention outcomes** (especially **§4.9**).
 
 **Implementation references**
 
@@ -410,15 +410,17 @@ flowchart LR
   D --> E[IDR Case Management Agent]
 ```
 
-| Order | Agent card | Pipeline stage key | Primary purpose |
-|------:|------------|-------------------|-----------------|
-| 1 | **IDR Intake Agent** | `intake` | Receive/index provider submissions & documents |
-| 2 | **IDR Validation Agent** | `validation` | Evidence completeness & approve/reject |
-| 3 | **NSA Compliance Agent** | `compliance` | NSA applicability & regulatory rule checks |
-| 4 | **NSA Dispute Resolution Agent** | `dispute` | Open negotiation log, federal IDR submission, arbitration outcome |
-| 5 | **IDR Case Management Agent** | `case` | Timeline, portfolio view, alerts, case closure |
+| Order | Agent card | Pipeline stage key | Primary purpose | **User-visible outcome (summary)** |
+|------:|------------|-------------------|-----------------|-----------------------------------|
+| 1 | **IDR Intake Agent** | `intake` | Receive/index provider submissions & documents | Document checkmarks; case routed with **Pending Validation** chip; new `IDR-2026-####` ID |
+| 2 | **IDR Validation Agent** | `validation` | Evidence completeness & approve/reject | **Evidence completeness %** bar; **Approved** or **Rejected** status; handoff to Compliance or Intake |
+| 3 | **NSA Compliance Agent** | `compliance` | NSA applicability & regulatory rule checks | **R1–R6** rule table with Pass/Fail/N/A chips; **Compliant** or **Review Required** banner |
+| 4 | **NSA Dispute Resolution Agent** | `dispute` | Open negotiation log, federal IDR submission, arbitration outcome | Offer/QPA cards; **Federal IDR — Arbitration** status; recorded **final determination** |
+| 5 | **IDR Case Management Agent** | `case` | Timeline, portfolio view, alerts, case closure | Full **case timeline**; **Resolved** chip; stakeholder alert confirmation |
 
 **Category color (UI):** `#FF6482` (rose/coral gradient header per agent dialog).
+
+**Detail:** Per-agent on-screen outcomes (exact alerts, toasts, timeline text) — **§4.9**.
 
 ---
 
@@ -485,6 +487,8 @@ Every agent dialog shares this layout:
 ## 4. User navigation — viewing AI intervention outcomes
 
 Unlike the CSNP hub (one dialog with tabs), NSA/IDR uses **five separate marketplace cards**. Each card opens the same `NSAIDRWorkspace.jsx` with a different `agentType`. Cases live in shared `nsaDisputes` state — actions in one card are visible when you open the next.
+
+Each agent produces **visible outcomes** in the UI: status chips, colored alerts, progress bars, rule-result chips, offer cards, toasts, and timeline rows. A full per-agent catalog is in **§4.9**.
 
 ### 4.1 Open an agent workspace
 
@@ -668,6 +672,112 @@ Toast severity rules are detailed in **§15**. Examples:
 | NSA Compliance | R1–R6 rule engine | `compliance`, `stage`, `status` |
 | NSA Dispute Resolution | Federal IDR submit, arbitration | `arbitrationSubmitted`, `finalDetermination` |
 | IDR Case Management | Alerts, closure | `status: Resolved`, `closeOutcome`, `timeline` |
+
+### 4.9 What outcomes users see from each agent (on-screen)
+
+This section describes **exactly what appears in the UI** after each agent runs — not only backend field updates. All five cards share the same header **KPIs** and **IDR stepper**; outcomes below are in the **agent panel**, **work queue**, **toast**, and **timeline**.
+
+#### Shared outcomes (every card)
+
+| UI element | What the user sees |
+|------------|-------------------|
+| **Work queue chip** | Case `status` text with color: warning (in progress), success (resolved/compliant), error (rejected/exceptions) |
+| **Pipeline stepper** | Completed steps checked; current agent’s step label **bold**; advances after successful routing |
+| **Portfolio KPIs** | **Open disputes**, **In intake**, **In validation**, **In arbitration** counts update when stage/status changes |
+| **Next step** (green alert) | *Next: open **{Next Agent Name}** on the marketplace for case IDR-2026-####.* |
+| **Toast** (bottom center) | **Green** = action succeeded + which card to open next; **Red** = blocked — fix input and retry |
+| **Case timeline** | New row: date chip + event sentence + actor agent name (visible on **IDR Case Management** and when reopening any card) |
+
+---
+
+#### Agent 1 — IDR Intake Agent
+
+**AI intervention:** Indexes provider documents, completes intake review, or creates a new dispute from the 4-step submission wizard.
+
+| User action | On-screen outcome (what you see) |
+|-------------|----------------------------------|
+| **Index document** | Row flips from amber **warning** icon to green **check** in the document table |
+| **Complete intake & route to validation** (success) | Green toast, e.g. *Intake review complete for IDR-2026-0055.* · **Next step** → **IDR Validation Agent** · Queue chip → **Pending Validation** · Stepper moves to Validation |
+| **Complete intake** (blocked) | **Red toast:** *Mark all required documents as received before routing.* |
+| **4-step wizard → Submit to validation queue** (success) | New case appears in queue with generated **IDR-2026-####** · Green toast: *Intake complete. Case IDR-2026-#### is ready for validation.* · Timeline first row: *IDR intake submitted and indexed* |
+| **Submit intake** (blocked) | **Red toast:** missing fields list, or *Attach at least 3 required documents before submitting intake.* |
+
+**Persisted on case (visible when reopening any card):** `stage: validation`, updated `documents[]`, `status`, new `timeline[]` entry.
+
+---
+
+#### Agent 2 — IDR Validation Agent
+
+**AI intervention:** Computes **evidence completeness** from required documents; approves route to compliance or rejects back to intake.
+
+| User action | On-screen outcome (what you see) |
+|-------------|----------------------------------|
+| Open case | **Alert** at top: *Evidence completeness: **{N}%** — Ready for approval* (green) or *…Missing required items* (amber) |
+| | **Linear progress bar** fills as % increases |
+| **Mark received** | % and alert update live; table row shows green check |
+| **Approve & route to compliance** (success) | Green toast: *Validation approved.* · **Next step** → **NSA Compliance Agent** · Chip → **Compliance Review** · Stepper on Compliance |
+| **Approve** (blocked) | **Red toast:** *Completeness below 80%. Request missing documents or reject case.* |
+| **Reject & request resubmission** | Green toast: *Rejection sent. Case … returned to intake — open IDR Intake Agent…* · Chip → **Rejected — resubmission required** · Case leaves validation queue |
+
+**Persisted:** `validationScore` (e.g. **85%**), `validationStatus: Approved` or `Rejected`, `stage` → `compliance` or `intake`, timeline: *Validation approved — {score}% evidence completeness* or rejection reason text.
+
+---
+
+#### Agent 3 — NSA Compliance Agent
+
+**AI intervention:** Runs NSA applicability and **six regulatory rules** (R1–R6); determines if the case may proceed to dispute resolution.
+
+| User action | On-screen outcome (what you see) |
+|-------------|----------------------------------|
+| Open case | Summary strip: **Billed**, **QPA**, **Negotiation days** (currency formatted) |
+| **Run NSA applicability & compliance analysis** | Button shows spinner · thin **progress bar** while running (~2 s) |
+| Analysis complete — **pass** | **Rules table:** each rule name + chip **Pass** or **N/A** (green) · **Green alert:** *Overall determination: **Compliant** — Member protections apply* · **Generate compliance audit report** button appears · Green toast: *Compliance complete.* · **Next step** → **NSA Dispute Resolution Agent** · Chip → **Ready for Dispute Resolution** |
+| Analysis complete — **fail** | Any rule chip **Fail** (red) · **Amber alert:** *Overall determination: **Review Required** …* · **Red toast:** *Compliance analysis complete. Resolve exceptions before dispute resolution.* · Case stays on Compliance step |
+
+**Persisted:** `compliance` object (`overall`, `rules[]`, `memberProtected`), `stage: dispute` or remains `compliance`, timeline: *NSA compliance analysis — Compliant* (or Review Required).
+
+---
+
+#### Agent 4 — NSA Dispute Resolution Agent
+
+**AI intervention:** Surfaces negotiation context, submits to federal IDR, records arbitration determination.
+
+| User action | On-screen outcome (what you see) |
+|-------------|----------------------------------|
+| Open case | Three **stat cards:** **Provider offer** (rose), **Plan offer** (blue), **QPA** (green) · **Open negotiation log** (Day 1 / Day 18 / Day N narrative) |
+| **Submit to federal IDR entity** | Button spinner (~1.8 s) · then disabled if already in arbitration · Chip → **Federal IDR — Arbitration** · Green toast: *Submitted to federal IDR.* · **Next step** → **IDR Case Management Agent** · KPI **In arbitration** may increase |
+| **Save determination** (success) | Timeline event with outcome and dollar amount · Green toast: *Arbitration decision recorded.* · Status → **Arbitration decision recorded** |
+| **Save determination** (blocked) | **Red toast:** *Enter arbitration outcome and final allowed amount.* |
+
+**Persisted:** `arbitrationSubmitted` date, `finalDetermination: { outcome, amount }`, `stage: case`, timeline entries for IDR submission and decision.
+
+---
+
+#### Agent 5 — IDR Case Management Agent
+
+**AI intervention:** Consolidates full dispute history, sends stakeholder alerts, closes and archives the case.
+
+| User action | On-screen outcome (what you see) |
+|-------------|----------------------------------|
+| Open card | **No sidebar** — full-width **case timeline** (all prior agent events) · **Portfolio table** of every dispute (click row to switch case) |
+| **Send stakeholder alert** (success) | New timeline row: *Alert sent: {your message}* · Green toast: *Stakeholder alert sent to provider, plan counsel, and finance.* · Message field clears |
+| **Send stakeholder alert** (blocked) | **Red toast:** *Enter alert message for stakeholders.* |
+| **Close case** (success) | Chip → **Resolved** (success color) · **Close case** button disabled · Green toast: *Case IDR-2026-#### closed and archived.* · Timeline: *Case closed — {close outcome}* · Header **Open disputes** KPI decreases |
+
+**Persisted:** `status: Resolved`, `closeOutcome` (e.g. *Settled in negotiation*, *Plan prevails*), final timeline entry.
+
+---
+
+#### End-to-end — outcomes users see across all five agents
+
+| Pipeline milestone | Status chip (example) | Key UI proof |
+|--------------------|----------------------|--------------|
+| Intake complete | Pending Validation | Green checks on documents; validation agent named in toast |
+| Validation approved | Compliance Review | **≥ 80%** green alert; approval toast |
+| Compliance pass | Ready for Dispute Resolution | **Compliant** banner; all rules Pass/N/A |
+| Federal IDR filed | Federal IDR — Arbitration | Submit button disabled; submission date on analyst card |
+| Decision recorded | Arbitration decision recorded | Outcome + **final allowed amount** in timeline |
+| Case closed | Resolved | Close disabled; portfolio shows resolved row |
 
 ---
 
@@ -1083,23 +1193,14 @@ Fixed position: bottom center of viewport, above dialog content (`z-index: 1500`
 ```
 MARKETPLACE CATEGORY: No Surprises Act & IDR (#FF6482)
 │
-├── [Card 1] IDR Intake Agent ──────────► Work queue · doc index · 4-step wizard
-│         └── Outcomes: timeline · stage → validation · toast → Validation card
-│
-├── [Card 2] IDR Validation Agent ──────► Score bar · approve/reject
-│         └── Outcomes: validationScore · stage → compliance or intake
-│
-├── [Card 3] NSA Compliance Agent ──────► Run analysis · R1–R6 table
-│         └── Outcomes: compliance object · stage → dispute or exceptions
-│
-├── [Card 4] NSA Dispute Resolution ────► IDR submit · arbitration form
-│         └── Outcomes: arbitrationSubmitted · finalDetermination
-│
-└── [Card 5] IDR Case Management ───────► Timeline · portfolio · close case
-          └── Outcomes: Resolved status · full audit trail (all agents)
+├── [Card 1] IDR Intake Agent ──────────► User sees: doc ✓/⚠ · Pending Validation chip · intake toasts
+├── [Card 2] IDR Validation Agent ──────► User sees: N% bar · Approved/Rejected · 80% gate (red toast)
+├── [Card 3] NSA Compliance Agent ──────► User sees: Compliant/Review Required · R1–R6 Pass/Fail chips
+├── [Card 4] NSA Dispute Resolution ────► User sees: $ offers/QPA · Federal IDR — Arbitration · determination
+└── [Card 5] IDR Case Management ───────► User sees: full timeline · Resolved chip · alert/close toasts
 ```
 
-**See §4** for step-by-step navigation and outcome interpretation.
+**See §4** for navigation; **§4.9** for exact on-screen text and visuals per agent.
 
 ---
 

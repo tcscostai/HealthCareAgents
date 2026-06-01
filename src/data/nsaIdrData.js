@@ -30,31 +30,82 @@ export const getNextAgentType = (currentAgentType) => {
   return i >= 0 && i < NSA_IDR_AGENT_ORDER.length - 1 ? NSA_IDR_AGENT_ORDER[i + 1] : null;
 };
 
+/** Compact on-screen outcomes (marketplace cards + workspace panel). */
 export const AGENT_META = {
-  'nsa-compliance': {
-    title: 'NSA Compliance Agent',
-    subtitle: 'Determine NSA applicability and compliance requirements',
-    icon: 'policy',
-  },
-  'nsa-dispute-resolution': {
-    title: 'NSA Dispute Resolution Agent',
-    subtitle: 'Independent Dispute Resolution and arbitration support',
-    icon: 'gavel',
-  },
   'idr-intake': {
     title: 'IDR Intake Agent',
     subtitle: 'Process provider dispute submissions and documentation',
     icon: 'storage',
+    userOutcomes: {
+      tagline: 'Index docs · route case · assign ID',
+      signals: [
+        { label: 'Doc ✓', tone: 'success' },
+        { label: 'Pending Validation', tone: 'info' },
+        { label: '→ Validation', tone: 'default' },
+      ],
+      success: 'Routed',
+      blocked: 'Missing docs',
+    },
   },
   'idr-validation': {
     title: 'IDR Validation Agent',
     subtitle: 'Validate IDR requests and required evidence packages',
     icon: 'factcheck',
+    userOutcomes: {
+      tagline: 'Score evidence · approve or reject',
+      signals: [
+        { label: 'N% complete', tone: 'info' },
+        { label: '≥80% gate', tone: 'warn' },
+        { label: '→ Compliance', tone: 'default' },
+      ],
+      success: 'Approved',
+      blocked: 'Below 80%',
+    },
+  },
+  'nsa-compliance': {
+    title: 'NSA Compliance Agent',
+    subtitle: 'Determine NSA applicability and compliance requirements',
+    icon: 'policy',
+    userOutcomes: {
+      tagline: 'Run R1–R6 · Compliant or review',
+      signals: [
+        { label: 'Pass / Fail', tone: 'success' },
+        { label: 'Compliant', tone: 'success' },
+        { label: '→ Dispute', tone: 'default' },
+      ],
+      success: 'Ready for IDR',
+      blocked: 'Exceptions',
+    },
+  },
+  'nsa-dispute-resolution': {
+    title: 'NSA Dispute Resolution Agent',
+    subtitle: 'Independent Dispute Resolution and arbitration support',
+    icon: 'gavel',
+    userOutcomes: {
+      tagline: 'Agentic negotiation log · IDR submit',
+      signals: [
+        { label: 'Timeline intel', tone: 'info' },
+        { label: 'Offer / QPA', tone: 'default' },
+        { label: '→ Case mgmt', tone: 'default' },
+      ],
+      success: 'IDR filed',
+      blocked: 'Missing fields',
+    },
   },
   'idr-case-management': {
     title: 'IDR Case Management Agent',
     subtitle: 'End-to-end dispute lifecycle tracking and reporting',
     icon: 'hub',
+    userOutcomes: {
+      tagline: 'Timeline · alerts · close case',
+      signals: [
+        { label: 'Full audit trail', tone: 'info' },
+        { label: 'Alerts sent', tone: 'default' },
+        { label: 'Resolved', tone: 'success' },
+      ],
+      success: 'Case closed',
+      blocked: 'Empty alert',
+    },
   },
 };
 
@@ -214,6 +265,50 @@ export const COMPLIANCE_RULES = [
   { id: 'R6', rule: 'State surprise billing law — no less favorable than federal protection', result: null },
 ];
 
+/** Shown when compliance analysis returns Review Required — operator resolution paths. */
+export const COMPLIANCE_RESOLUTION_ACTIONS = [
+  {
+    id: 'extend-negotiation',
+    label: 'Certify 30-day open negotiation',
+    description: 'Document full 30-day negotiation period (fixes R4 when days < 30).',
+    ruleIds: ['R4'],
+    visible: (d) => (d.negotiationDays ?? 0) < 30,
+  },
+  {
+    id: 'index-negotiation-notice',
+    label: 'Index open negotiation notice',
+    description: 'Mark Provider Open Negotiation Notice as received in the evidence package.',
+    ruleIds: [],
+    visible: (d) =>
+      d.documents?.some(
+        (doc) => doc.name.toLowerCase().includes('negotiation') && doc.required && !doc.received
+      ),
+  },
+  {
+    id: 'request-corrected-qpa',
+    label: 'Request corrected QPA from plan',
+    description: 'Trigger actuarial rework task; case stays in compliance until QPA package returned.',
+    ruleIds: ['R3'],
+    visible: () => true,
+  },
+  {
+    id: 'return-validation',
+    label: 'Return to validation queue',
+    description: 'Send case back to IDR Validation when evidence is incomplete.',
+    ruleIds: [],
+    visible: (d) =>
+      d.validationStatus === 'Incomplete' ||
+      d.documents?.some((doc) => doc.required && !doc.received),
+  },
+  {
+    id: 'supervisor-override',
+    label: 'Supervisor override — proceed to dispute',
+    description: 'Compliance officer attestation: documented exception; route to Dispute Resolution.',
+    ruleIds: [],
+    visible: () => true,
+  },
+];
+
 export const REJECTION_REASONS = [
   'Missing open negotiation notice',
   'Incomplete QPA documentation',
@@ -235,6 +330,59 @@ export const INTAKE_FORM_DEFAULTS = {
   planOffer: '',
   providerOffer: '',
 };
+
+const fmtUsd = (n) =>
+  n == null || Number.isNaN(Number(n))
+    ? '—'
+    : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(n));
+
+/** Agentic open-negotiation timeline for Dispute Resolution workspace. */
+export function buildNegotiationIntel(dispute) {
+  const days = Math.max(1, Number(dispute.negotiationDays) || 30);
+  const counterDay = Math.min(days - 1, Math.max(2, Math.round(days * 0.52)));
+  const planOffer = Number(dispute.planOffer) || 0;
+  const providerOffer = Number(dispute.providerOffer) || 0;
+  const qpa = Number(dispute.qpa) || 0;
+  const offerSpreadPct =
+    planOffer > 0 ? Math.round(((providerOffer - planOffer) / planOffer) * 100) : null;
+
+  return {
+    agent: 'NSA Dispute Resolution Agent',
+    entries: [
+      {
+        day: 1,
+        narrative: `Plan initial offer ${fmtUsd(planOffer)} sent to provider.`,
+        intervention: 'Extracted plan offer from EOB, remittance, and open-negotiation notice (LLM + rules).',
+        interventionType: 'extraction',
+      },
+      {
+        day: counterDay,
+        narrative: `Provider counter ${fmtUsd(providerOffer)}; plan maintained QPA-based offer ${fmtUsd(planOffer)}.`,
+        intervention: 'Matched counter-offer to negotiation thread; validated against QPA methodology.',
+        interventionType: 'analysis',
+      },
+      {
+        day: days,
+        narrative:
+          days >= 30
+            ? 'Negotiation closed. Federal IDR eligible.'
+            : `Negotiation period ${days} days — IDR eligibility requires compliance review (30-day rule).`,
+        intervention:
+          days >= 30
+            ? 'Confirmed 30-day open negotiation under NSA; IDR initiation criteria satisfied.'
+            : 'Flagged short negotiation window — cross-check with Compliance Agent (R4).',
+        interventionType: days >= 30 ? 'eligibility' : 'analysis',
+      },
+    ],
+    insights: [
+      offerSpreadPct != null
+        ? `Provider counter ${offerSpreadPct}% above plan offer; gap analysis stored on case.`
+        : null,
+      qpa > 0 ? `QPA reference ${fmtUsd(qpa)} — plan offer within QPA-aligned band.` : null,
+      dispute.disputeType ? `Dispute type: ${dispute.disputeType}.` : null,
+    ].filter(Boolean),
+  };
+}
 
 export const PLACE_OF_SERVICE_OPTIONS = [
   'Emergency Department',
